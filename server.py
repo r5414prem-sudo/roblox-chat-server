@@ -18,14 +18,18 @@ def send_message():
     try:
         data = request.get_json()
         username = str(data['username'])[:50]
+        display_name = str(data.get('displayName', username))[:50]
         message = str(data['message'])[:500]
         game = str(data.get('game', 'Unknown'))[:100]
+        invite_link = str(data.get('inviteLink', ''))[:200]
         
         new_message = {
             "id": len(messages) + 1,
             "username": username,
+            "displayName": display_name,
             "message": message,
             "game": game,
+            "inviteLink": invite_link,
             "timestamp": datetime.now().isoformat()
         }
         
