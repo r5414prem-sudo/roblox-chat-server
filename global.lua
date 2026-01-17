@@ -1,4 +1,4 @@
--- Universal Cross-Game Chat (Fixed & Redesigned)
+-- Universal Cross-Game Chat (Compact & Optimized)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
@@ -16,22 +16,37 @@ if not httpRequest then
 end
 
 -- Settings
-local UPDATE_INTERVAL = 2
+local UPDATE_INTERVAL = 1.5
 local MAX_MESSAGE_LENGTH = 200
 local DISPLAY_NAME = LocalPlayer.DisplayName
 
 -- State
 local lastMessageTime = nil
 local isActive = true
+local isMinimized = false
 local currentGameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
 local currentJobId = game.JobId
 local isAutoScrollEnabled = true
 
--- Copy server invite link to clipboard
-local inviteLink = game.PlaceId .. "|" .. game.JobId
+-- Generate proper invite link (PlaceId|JobId format)
+local inviteLink = tostring(game.PlaceId) .. "|" .. tostring(game.JobId)
+
+-- Copy to clipboard
 if setclipboard then
     setclipboard(inviteLink)
-    print("📋 Server invite link copied to clipboard!")
+    print("📋 Server invite copied: " .. inviteLink)
+end
+
+-- Verify invite link format
+local function verifyInviteLink(link)
+    if not link or link == "" then return false end
+    local placeId, jobId = link:match("^(%d+)|(.+)$")
+    return placeId ~= nil and jobId ~= nil and #jobId > 10
+end
+
+if not verifyInviteLink(inviteLink) then
+    warn("⚠️ Invalid invite link format!")
+    return
 end
 
 -- GUI Setup
@@ -41,10 +56,10 @@ screenGui.IgnoreGuiInset = true
 screenGui.DisplayOrder = 1003
 screenGui.Parent = game:GetService("CoreGui")
 
--- Main Frame (NOT DRAGGABLE - only title bar will be)
+-- Main Frame (Compact for mobile)
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 380, 0, 420)
-mainFrame.Position = UDim2.new(1, -400, 0.5, -210)
+mainFrame.Size = UDim2.new(0, 340, 0, 380)
+mainFrame.Position = UDim2.new(1, -360, 0.5, -190)
 mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 mainFrame.BackgroundTransparency = 0.05
 mainFrame.BorderSizePixel = 0
@@ -56,20 +71,20 @@ local mainCorner = Instance.new("UICorner")
 mainCorner.CornerRadius = UDim.new(0, 12)
 mainCorner.Parent = mainFrame
 
--- Title Bar (THIS IS DRAGGABLE)
+-- Title Bar (Draggable)
 local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1, 0, 0, 35)
+titleBar.Size = UDim2.new(1, 0, 0, 32)
 titleBar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 titleBar.BorderSizePixel = 0
 titleBar.Active = true
 titleBar.Parent = mainFrame
 
--- Make title bar draggable
+-- Dragging functionality
 local dragging = false
 local dragInput, dragStart, startPos
 
 titleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
         startPos = mainFrame.Position
@@ -83,7 +98,7 @@ titleBar.InputBegan:Connect(function(input)
 end)
 
 titleBar.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
         dragInput = input
     end
 end)
@@ -105,20 +120,20 @@ titleCorner.CornerRadius = UDim.new(0, 12)
 titleCorner.Parent = titleBar
 
 local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, -75, 1, 0)
+titleLabel.Size = UDim2.new(1, -95, 1, 0)
 titleLabel.Position = UDim2.new(0, 8, 0, 0)
 titleLabel.BackgroundTransparency = 1
 titleLabel.Text = "🌐 Universal Chat"
 titleLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
 titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 14
+titleLabel.TextSize = 13
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = titleBar
 
--- Status Indicator
+-- Status Indicator (shifted left to avoid overlap)
 local statusDot = Instance.new("Frame")
-statusDot.Size = UDim2.new(0, 10, 0, 10)
-statusDot.Position = UDim2.new(1, -68, 0.5, -5)
+statusDot.Size = UDim2.new(0, 8, 0, 8)
+statusDot.Position = UDim2.new(1, -118, 0.5, -4)
 statusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
 statusDot.BorderSizePixel = 0
 statusDot.Parent = titleBar
@@ -128,40 +143,55 @@ dotCorner.CornerRadius = UDim.new(1, 0)
 dotCorner.Parent = statusDot
 
 local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(0, 50, 1, 0)
-statusLabel.Position = UDim2.new(1, -58, 0, 0)
+statusLabel.Size = UDim2.new(0, 45, 1, 0)
+statusLabel.Position = UDim2.new(1, -110, 0, 0)
 statusLabel.BackgroundTransparency = 1
 statusLabel.Text = "Offline"
 statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
 statusLabel.Font = Enum.Font.Gotham
-statusLabel.TextSize = 9
+statusLabel.TextSize = 8
 statusLabel.Parent = titleBar
+
+-- Minimize Button
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 26, 0, 26)
+minimizeBtn.Position = UDim2.new(1, -62, 0, 3)
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+minimizeBtn.Text = "−"
+minimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizeBtn.Font = Enum.Font.GothamBold
+minimizeBtn.TextSize = 16
+minimizeBtn.Parent = titleBar
+
+local minimizeCorner = Instance.new("UICorner")
+minimizeCorner.CornerRadius = UDim.new(0, 7)
+minimizeCorner.Parent = minimizeBtn
 
 -- Close Button
 local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 28, 0, 28)
-closeBtn.Position = UDim2.new(1, -32, 0, 3.5)
+closeBtn.Size = UDim2.new(0, 26, 0, 26)
+closeBtn.Position = UDim2.new(1, -32, 0, 3)
 closeBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
 closeBtn.Text = "✕"
 closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextSize = 14
+closeBtn.TextSize = 13
 closeBtn.Parent = titleBar
 
 local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 8)
+closeCorner.CornerRadius = UDim.new(0, 7)
 closeCorner.Parent = closeBtn
 
 -- Game Label
 local gameLabel = Instance.new("TextLabel")
-gameLabel.Size = UDim2.new(0.95, 0, 0, 22)
-gameLabel.Position = UDim2.new(0.025, 0, 0, 42)
+gameLabel.Size = UDim2.new(0.94, 0, 0, 20)
+gameLabel.Position = UDim2.new(0.03, 0, 0, 38)
 gameLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 80)
 gameLabel.BorderSizePixel = 0
 gameLabel.Text = "📍 " .. currentGameName
 gameLabel.TextColor3 = Color3.fromRGB(150, 200, 255)
 gameLabel.Font = Enum.Font.Gotham
-gameLabel.TextSize = 10
+gameLabel.TextSize = 9
 gameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 gameLabel.Parent = mainFrame
 
@@ -169,13 +199,13 @@ local gameCorner = Instance.new("UICorner")
 gameCorner.CornerRadius = UDim.new(0, 6)
 gameCorner.Parent = gameLabel
 
--- Chat Display Frame (SCROLLABLE, NOT DRAGGABLE)
+-- Chat Display Frame
 local chatFrame = Instance.new("ScrollingFrame")
-chatFrame.Size = UDim2.new(0.95, 0, 0, 305)
-chatFrame.Position = UDim2.new(0.025, 0, 0, 72)
+chatFrame.Size = UDim2.new(0.94, 0, 0, 280)
+chatFrame.Position = UDim2.new(0.03, 0, 0, 64)
 chatFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 chatFrame.BorderSizePixel = 0
-chatFrame.ScrollBarThickness = 8
+chatFrame.ScrollBarThickness = 6
 chatFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 200, 255)
 chatFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
 chatFrame.ScrollingDirection = Enum.ScrollingDirection.Y
@@ -188,24 +218,24 @@ chatCorner.Parent = chatFrame
 
 local chatLayout = Instance.new("UIListLayout")
 chatLayout.SortOrder = Enum.SortOrder.LayoutOrder
-chatLayout.Padding = UDim.new(0, 8)
+chatLayout.Padding = UDim.new(0, 5)
 chatLayout.Parent = chatFrame
 
--- Update canvas size when layout changes
+-- Update canvas size
 chatLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     chatFrame.CanvasSize = UDim2.new(0, 0, 0, chatLayout.AbsoluteContentSize.Y + 10)
 end)
 
--- Scroll Down Button (Hidden by default)
+-- Scroll Down Button
 local scrollDownBtn = Instance.new("TextButton")
-scrollDownBtn.Size = UDim2.new(0, 45, 0, 45)
-scrollDownBtn.Position = UDim2.new(0.5, -22.5, 1, -55)
+scrollDownBtn.Size = UDim2.new(0, 38, 0, 38)
+scrollDownBtn.Position = UDim2.new(0.5, -19, 1, -48)
 scrollDownBtn.AnchorPoint = Vector2.new(0.5, 0.5)
 scrollDownBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 255)
 scrollDownBtn.Text = "⬇"
 scrollDownBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 scrollDownBtn.Font = Enum.Font.GothamBold
-scrollDownBtn.TextSize = 22
+scrollDownBtn.TextSize = 18
 scrollDownBtn.Visible = false
 scrollDownBtn.ZIndex = 10
 scrollDownBtn.Parent = chatFrame
@@ -221,8 +251,8 @@ scrollDownStroke.Parent = scrollDownBtn
 
 -- Input Frame
 local inputFrame = Instance.new("Frame")
-inputFrame.Size = UDim2.new(0.95, 0, 0, 32)
-inputFrame.Position = UDim2.new(0.025, 0, 1, -38)
+inputFrame.Size = UDim2.new(0.94, 0, 0, 30)
+inputFrame.Position = UDim2.new(0.03, 0, 1, -35)
 inputFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 inputFrame.BorderSizePixel = 0
 inputFrame.Parent = mainFrame
@@ -231,40 +261,39 @@ local inputCorner = Instance.new("UICorner")
 inputCorner.CornerRadius = UDim.new(0, 8)
 inputCorner.Parent = inputFrame
 
--- Text Input
 local textBox = Instance.new("TextBox")
-textBox.Size = UDim2.new(0.7, 0, 0.85, 0)
-textBox.Position = UDim2.new(0.02, 0, 0.075, 0)
+textBox.Size = UDim2.new(0.7, 0, 0.8, 0)
+textBox.Position = UDim2.new(0.02, 0, 0.1, 0)
 textBox.BackgroundTransparency = 1
 textBox.Text = ""
 textBox.PlaceholderText = "Type message..."
 textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 textBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
 textBox.Font = Enum.Font.Gotham
-textBox.TextSize = 12
+textBox.TextSize = 11
 textBox.TextXAlignment = Enum.TextXAlignment.Left
 textBox.ClearTextOnFocus = false
 textBox.Parent = inputFrame
 
--- Send Button
 local sendBtn = Instance.new("TextButton")
-sendBtn.Size = UDim2.new(0.26, 0, 0.85, 0)
-sendBtn.Position = UDim2.new(0.73, 0, 0.075, 0)
+sendBtn.Size = UDim2.new(0.26, 0, 0.8, 0)
+sendBtn.Position = UDim2.new(0.73, 0, 0.1, 0)
 sendBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 255)
 sendBtn.Text = "Send"
 sendBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 sendBtn.Font = Enum.Font.GothamBold
-sendBtn.TextSize = 12
+sendBtn.TextSize = 11
 sendBtn.Parent = inputFrame
 
 local sendCorner = Instance.new("UICorner")
 sendCorner.CornerRadius = UDim.new(0, 6)
 sendCorner.Parent = sendBtn
 
--- JSON Encode/Decode Functions
 local HttpService = game:GetService("HttpService")
 
--- Functions
+-- Avatar cache to reduce API calls
+local avatarCache = {}
+
 local function updateStatus(online)
     if online then
         statusDot.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
@@ -284,37 +313,54 @@ local function scrollToBottom()
 end
 
 local function getPlayerAvatar(userId)
+    -- Check cache first
+    if avatarCache[userId] then
+        return avatarCache[userId]
+    end
+    
     local success, result = pcall(function()
         return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
     end)
-    return success and result or ""
+    
+    if success and result then
+        avatarCache[userId] = result
+        return result
+    end
+    return ""
+end
+
+local function getUserIdFromUsername(username)
+    local success, userId = pcall(function()
+        return Players:GetUserIdFromNameAsync(username)
+    end)
+    return success and userId or nil
 end
 
 local function createMessageBubble(username, displayName, message, game, timestamp, inviteData)
     local isMe = (username == LocalPlayer.Name)
     
     local msgFrame = Instance.new("Frame")
-    msgFrame.Size = UDim2.new(1, -10, 0, 0)
+    msgFrame.Size = UDim2.new(1, -8, 0, 0)
     msgFrame.BackgroundTransparency = 1
     msgFrame.AutomaticSize = Enum.AutomaticSize.Y
     msgFrame.Parent = chatFrame
     
     local msgLayout = Instance.new("UIListLayout")
     msgLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    msgLayout.Padding = UDim.new(0, 4)
+    msgLayout.Padding = UDim.new(0, 3)
     msgLayout.Parent = msgFrame
     
-    -- Header Container
+    -- Header
     local headerFrame = Instance.new("Frame")
-    headerFrame.Size = UDim2.new(1, 0, 0, 20)
+    headerFrame.Size = UDim2.new(1, 0, 0, 16)
     headerFrame.BackgroundTransparency = 1
     headerFrame.LayoutOrder = 1
     headerFrame.Parent = msgFrame
     
-    -- Avatar Image
+    -- Avatar
     local avatar = Instance.new("ImageLabel")
-    avatar.Size = UDim2.new(0, 18, 0, 18)
-    avatar.Position = isMe and UDim2.new(1, -18, 0, 1) or UDim2.new(0, 0, 0, 1)
+    avatar.Size = UDim2.new(0, 16, 0, 16)
+    avatar.Position = isMe and UDim2.new(1, -16, 0, 0) or UDim2.new(0, 0, 0, 0)
     avatar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
     avatar.BorderSizePixel = 0
     avatar.Image = ""
@@ -324,32 +370,34 @@ local function createMessageBubble(username, displayName, message, game, timesta
     avatarCorner.CornerRadius = UDim.new(1, 0)
     avatarCorner.Parent = avatar
     
-    -- Load avatar asynchronously
+    -- Load avatar with optimized caching
     task.spawn(function()
         local player = Players:FindFirstChild(username)
-        if player then
-            local avatarUrl = getPlayerAvatar(player.UserId)
+        local userId = player and player.UserId or getUserIdFromUsername(username)
+        
+        if userId then
+            local avatarUrl = getPlayerAvatar(userId)
             if avatarUrl ~= "" then
                 avatar.Image = avatarUrl
             end
         end
     end)
     
-    -- Header Label
+    -- Header text
     local headerLabel = Instance.new("TextLabel")
-    headerLabel.Size = UDim2.new(1, -24, 1, 0)
-    headerLabel.Position = isMe and UDim2.new(0, 0, 0, 0) or UDim2.new(0, 22, 0, 0)
+    headerLabel.Size = UDim2.new(1, -20, 1, 0)
+    headerLabel.Position = isMe and UDim2.new(0, 0, 0, 0) or UDim2.new(0, 20, 0, 0)
     headerLabel.BackgroundTransparency = 1
     
     local timeStr = timestamp:match("T(%d%d:%d%d)") or "??:??"
     headerLabel.Text = displayName .. " • " .. game .. " • " .. timeStr
     headerLabel.TextColor3 = isMe and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(255, 200, 100)
     headerLabel.Font = Enum.Font.GothamBold
-    headerLabel.TextSize = 10
+    headerLabel.TextSize = 9
     headerLabel.TextXAlignment = isMe and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
     headerLabel.Parent = headerFrame
     
-    -- Message Container (with Join Button)
+    -- Message container
     local messageContainer = Instance.new("Frame")
     messageContainer.Size = UDim2.new(1, 0, 0, 0)
     messageContainer.BackgroundTransparency = 1
@@ -357,24 +405,24 @@ local function createMessageBubble(username, displayName, message, game, timesta
     messageContainer.LayoutOrder = 2
     messageContainer.Parent = msgFrame
     
-    -- Message bubble
+    -- Bubble
     local bubble = Instance.new("Frame")
-    bubble.Size = UDim2.new(0.80, 0, 0, 0)
-    bubble.Position = isMe and UDim2.new(0.20, 0, 0, 0) or UDim2.new(0, 0, 0, 0)
+    bubble.Size = UDim2.new(0.78, 0, 0, 0)
+    bubble.Position = isMe and UDim2.new(0.22, 0, 0, 0) or UDim2.new(0, 0, 0, 0)
     bubble.BackgroundColor3 = isMe and Color3.fromRGB(50, 100, 200) or Color3.fromRGB(50, 50, 50)
     bubble.AutomaticSize = Enum.AutomaticSize.Y
     bubble.BorderSizePixel = 0
     bubble.Parent = messageContainer
     
     local bubbleCorner = Instance.new("UICorner")
-    bubbleCorner.CornerRadius = UDim.new(0, 10)
+    bubbleCorner.CornerRadius = UDim.new(0, 8)
     bubbleCorner.Parent = bubble
     
     local bubblePadding = Instance.new("UIPadding")
-    bubblePadding.PaddingLeft = UDim.new(0, 10)
-    bubblePadding.PaddingRight = UDim.new(0, 10)
-    bubblePadding.PaddingTop = UDim.new(0, 8)
-    bubblePadding.PaddingBottom = UDim.new(0, 8)
+    bubblePadding.PaddingLeft = UDim.new(0, 8)
+    bubblePadding.PaddingRight = UDim.new(0, 8)
+    bubblePadding.PaddingTop = UDim.new(0, 6)
+    bubblePadding.PaddingBottom = UDim.new(0, 6)
     bubblePadding.Parent = bubble
     
     local msgLabel = Instance.new("TextLabel")
@@ -383,34 +431,33 @@ local function createMessageBubble(username, displayName, message, game, timesta
     msgLabel.Text = message
     msgLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     msgLabel.Font = Enum.Font.Gotham
-    msgLabel.TextSize = 12
+    msgLabel.TextSize = 11
     msgLabel.TextWrapped = true
     msgLabel.TextXAlignment = Enum.TextXAlignment.Left
     msgLabel.TextYAlignment = Enum.TextYAlignment.Top
     msgLabel.AutomaticSize = Enum.AutomaticSize.Y
     msgLabel.Parent = bubble
     
-    -- Join Button (only if not from current user)
-    if not isMe and inviteData and inviteData ~= "" then
+    -- Join button
+    if not isMe and inviteData and verifyInviteLink(inviteData) then
         local joinBtn = Instance.new("TextButton")
-        joinBtn.Size = UDim2.new(0, 55, 0, 28)
-        joinBtn.Position = UDim2.new(1, -60, 0, 0)
-        joinBtn.AnchorPoint = Vector2.new(0, 0)
+        joinBtn.Size = UDim2.new(0, 50, 0, 24)
+        joinBtn.Position = UDim2.new(1, -54, 0, 0)
         joinBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
         joinBtn.Text = "Join"
         joinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
         joinBtn.Font = Enum.Font.GothamBold
-        joinBtn.TextSize = 11
+        joinBtn.TextSize = 10
         joinBtn.Parent = messageContainer
         
         local joinCorner = Instance.new("UICorner")
-        joinCorner.CornerRadius = UDim.new(0, 7)
+        joinCorner.CornerRadius = UDim.new(0, 6)
         joinCorner.Parent = joinBtn
         
         joinBtn.MouseButton1Click:Connect(function()
-            local placeId, jobId = inviteData:match("(%d+)|(.+)")
+            local placeId, jobId = inviteData:match("^(%d+)|(.+)$")
             if placeId and jobId then
-                joinBtn.Text = "Joining..."
+                joinBtn.Text = "..."
                 joinBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
                 
                 local success = pcall(function()
@@ -418,7 +465,7 @@ local function createMessageBubble(username, displayName, message, game, timesta
                 end)
                 
                 if not success then
-                    joinBtn.Text = "Failed"
+                    joinBtn.Text = "✗"
                     joinBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
                     task.wait(2)
                     joinBtn.Text = "Join"
@@ -428,8 +475,7 @@ local function createMessageBubble(username, displayName, message, game, timesta
         end)
     end
     
-    -- Auto-scroll if enabled
-    task.wait(0.1)
+    task.wait(0.05)
     if isAutoScrollEnabled then
         scrollToBottom()
     end
@@ -437,16 +483,13 @@ end
 
 local function sendMessage(message)
     if not message or message == "" or message:match("^%s*$") then return end
-    
     message = message:sub(1, MAX_MESSAGE_LENGTH)
     
     local success, response = pcall(function()
         return httpRequest({
             Url = SERVER_URL .. "/send",
             Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
+            Headers = {["Content-Type"] = "application/json"},
             Body = HttpService:JSONEncode({
                 username = LocalPlayer.Name,
                 displayName = DISPLAY_NAME,
@@ -460,7 +503,6 @@ local function sendMessage(message)
     if success and response.StatusCode == 201 then
         updateStatus(true)
     else
-        warn("Failed to send message")
         updateStatus(false)
     end
 end
@@ -471,10 +513,7 @@ local function fetchMessages()
         if lastMessageTime then
             url = url .. "?since=" .. HttpService:UrlEncode(lastMessageTime)
         end
-        return httpRequest({
-            Url = url,
-            Method = "GET"
-        })
+        return httpRequest({Url = url, Method = "GET"})
     end)
     
     if success and response.StatusCode == 200 then
@@ -501,13 +540,12 @@ local function fetchMessages()
     end
 end
 
--- Detect scroll position to show/hide scroll down button
+-- Scroll detection
 chatFrame:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
     local maxScroll = chatFrame.AbsoluteCanvasSize.Y - chatFrame.AbsoluteWindowSize.Y
     local currentScroll = chatFrame.CanvasPosition.Y
     
-    -- Show button if not at bottom (with 30px threshold)
-    if maxScroll > 0 and (maxScroll - currentScroll) > 30 then
+    if maxScroll > 0 and (maxScroll - currentScroll) > 25 then
         scrollDownBtn.Visible = true
         isAutoScrollEnabled = false
     else
@@ -516,26 +554,43 @@ chatFrame:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
     end
 end)
 
--- Button Events
-scrollDownBtn.MouseButton1Click:Connect(function()
-    scrollToBottom()
+-- Minimize/Maximize with proper visibility control
+minimizeBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    if isMinimized then
+        -- Hide all content except title bar
+        gameLabel.Visible = false
+        chatFrame.Visible = false
+        inputFrame.Visible = false
+        mainFrame:TweenSize(UDim2.new(0, 340, 0, 32), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.3, true)
+        minimizeBtn.Text = "+"
+    else
+        -- Show all content
+        gameLabel.Visible = true
+        chatFrame.Visible = true
+        inputFrame.Visible = true
+        mainFrame:TweenSize(UDim2.new(0, 340, 0, 380), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.3, true)
+        minimizeBtn.Text = "−"
+    end
 end)
 
+scrollDownBtn.MouseButton1Click:Connect(scrollToBottom)
+
 sendBtn.MouseButton1Click:Connect(function()
-    local message = textBox.Text
-    if message ~= "" then
-        sendMessage(message)
-        createMessageBubble(LocalPlayer.Name, DISPLAY_NAME, message, currentGameName, DateTime.now():ToIsoDate(), inviteLink)
+    local msg = textBox.Text
+    if msg ~= "" then
+        sendMessage(msg)
+        createMessageBubble(LocalPlayer.Name, DISPLAY_NAME, msg, currentGameName, DateTime.now():ToIsoDate(), inviteLink)
         textBox.Text = ""
     end
 end)
 
 textBox.FocusLost:Connect(function(enterPressed)
     if enterPressed then
-        local message = textBox.Text
-        if message ~= "" then
-            sendMessage(message)
-            createMessageBubble(LocalPlayer.Name, DISPLAY_NAME, message, currentGameName, DateTime.now():ToIsoDate(), inviteLink)
+        local msg = textBox.Text
+        if msg ~= "" then
+            sendMessage(msg)
+            createMessageBubble(LocalPlayer.Name, DISPLAY_NAME, msg, currentGameName, DateTime.now():ToIsoDate(), inviteLink)
             textBox.Text = ""
         end
     end
@@ -546,21 +601,17 @@ closeBtn.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
--- Auto-fetch loop
 task.spawn(function()
     while isActive and task.wait(UPDATE_INTERVAL) do
         fetchMessages()
     end
 end)
 
--- Initial fetch
 task.wait(1)
 fetchMessages()
 
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 print("🌐 UNIVERSAL CHAT LOADED")
-print("✅ Works in ANY game!")
-print("Server:", SERVER_URL)
-print("Game:", currentGameName)
-print("📋 Invite Link:", inviteLink)
+print("✅ Invite Link: " .. inviteLink)
+print("✅ Format Valid: " .. tostring(verifyInviteLink(inviteLink)))
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
