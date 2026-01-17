@@ -28,13 +28,27 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 
 def get_db_connection():
     """Create database connection"""
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-    return conn
+    if not DATABASE_URL:
+        return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
+    except Exception as e:
+        print(f"Database connection error: {e}")
+        return None
 
 def init_database():
     """Initialize database table if it doesn't exist"""
+    if not DATABASE_URL:
+        print("⚠️  WARNING: DATABASE_URL not set - skipping database initialization")
+        return False
+    
     try:
         conn = get_db_connection()
+        if not conn:
+            print("❌ Could not connect to database")
+            return False
+            
         cur = conn.cursor()
         
         # Create messages table with rank info
@@ -61,15 +75,17 @@ def init_database():
         cur.close()
         conn.close()
         print("✅ Database initialized successfully")
+        return True
     except Exception as e:
         print(f"❌ Database initialization error: {e}")
+        return False
 
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
         "status": "online",
         "service": "Universal Roblox Chat",
-        "database": "PostgreSQL" if DATABASE_URL else "Not configured",
+        "database": "PostgreSQL Connected" if DATABASE_URL else "Not configured",
         "features": ["ranks", "persistent_storage"]
     })
 
@@ -91,6 +107,9 @@ def send_message():
         
         # Save to database
         conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Database connection failed"}), 500
+            
         cur = conn.cursor()
         
         cur.execute(
@@ -133,6 +152,9 @@ def get_messages():
         limit = min(limit, 100)
         
         conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Database connection failed"}), 500
+            
         cur = conn.cursor()
         
         if since:
@@ -199,6 +221,9 @@ def get_stats():
     """Get chat statistics"""
     try:
         conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Database connection failed"}), 500
+            
         cur = conn.cursor()
         
         # Total messages
@@ -230,6 +255,9 @@ def clear_messages():
     """Clear all messages (admin only)"""
     try:
         conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Database connection failed"}), 500
+            
         cur = conn.cursor()
         
         cur.execute('DELETE FROM messages')
@@ -249,10 +277,17 @@ def clear_messages():
 
 if __name__ == '__main__':
     # Initialize database on startup
+    print("🚀 Starting Universal Roblox Chat Server...")
+    
     if DATABASE_URL:
-        init_database()
+        print("📦 DATABASE_URL found, initializing database...")
+        if init_database():
+            print("✅ Database ready!")
+        else:
+            print("⚠️  Database initialization had issues, but continuing...")
     else:
-        print("⚠️  WARNING: DATABASE_URL not set - messages will not persist!")
+        print("⚠️  WARNING: DATABASE_URL not set - app will not work properly!")
     
     port = int(os.environ.get('PORT', 10000))
+    print(f"🌐 Starting server on port {port}...")
     app.run(host='0.0.0.0', port=port)
