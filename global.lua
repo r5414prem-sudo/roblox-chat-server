@@ -421,6 +421,7 @@ local function createMessageBubble(username, displayName, message, game, timesta
     bubble.BackgroundColor3 = isMe and Color3.fromRGB(50, 100, 200) or Color3.fromRGB(50, 50, 50)
     bubble.AutomaticSize = Enum.AutomaticSize.Y
     bubble.BorderSizePixel = 0
+    bubble.Active = true
     bubble.Parent = messageContainer
     
     local bubbleCorner = Instance.new("UICorner")
@@ -434,10 +435,38 @@ local function createMessageBubble(username, displayName, message, game, timesta
     bubblePadding.PaddingBottom = UDim.new(0, 6)
     bubblePadding.Parent = bubble
     
+    -- Detect URLs in message
+    local function hasUrl(text)
+        return text:match("https?://[%w-_%.%?%.:/%+=&]+") or text:match("www%.[%w-_%.%?%.:/%+=&]+")
+    end
+    
+    local function makeClickableText(text)
+        local urlPattern = "(https?://[%w-_%.%?%.:/%+=&]+)"
+        local wwwPattern = "(www%.[%w-_%.%?%.:/%+=&]+)"
+        
+        if text:match(urlPattern) or text:match(wwwPattern) then
+            return true, text:match(urlPattern) or "https://" .. text:match(wwwPattern)
+        end
+        return false, nil
+    end
+    
+    local hasLink, extractedUrl = makeClickableText(message)
+    
+    -- Message label with RichText for clickable links
     local msgLabel = Instance.new("TextLabel")
     msgLabel.Size = UDim2.new(1, 0, 0, 0)
     msgLabel.BackgroundTransparency = 1
-    msgLabel.Text = message
+    msgLabel.RichText = hasLink
+    
+    if hasLink then
+        -- Highlight links in cyan
+        local highlightedText = message:gsub("(https?://[%w-_%.%?%.:/%+=&]+)", '<font color="#00DDFF"><u>%1</u></font>')
+        highlightedText = highlightedText:gsub("(www%.[%w-_%.%?%.:/%+=&]+)", '<font color="#00DDFF"><u>%1</u></font>')
+        msgLabel.Text = highlightedText
+    else
+        msgLabel.Text = message
+    end
+    
     msgLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     msgLabel.Font = Enum.Font.Gotham
     msgLabel.TextSize = 11
@@ -447,7 +476,99 @@ local function createMessageBubble(username, displayName, message, game, timesta
     msgLabel.AutomaticSize = Enum.AutomaticSize.Y
     msgLabel.Parent = bubble
     
-    -- Join button (only show with header)
+    -- Hold to copy functionality
+    local holdTime = 0
+    local isHolding = false
+    local holdConnection
+    
+    bubble.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isHolding = true
+            holdTime = 0
+            
+            -- If message has link, open it on click
+            if hasLink and extractedUrl then
+                -- Open link in browser
+                if syn and syn.request then
+                    syn.request({
+                        Url = "http://127.0.0.1:6463/rpc?v=1",
+                        Method = "POST",
+                        Headers = {["Content-Type"] = "application/json"},
+                        Body = game:GetService("HttpService"):JSONEncode({
+                            cmd = "INVITE_BROWSER",
+                            args = {code = extractedUrl},
+                            nonce = tostring(os.time())
+                        })
+                    })
+                end
+                
+                -- Try to copy URL to clipboard
+                if setclipboard then
+                    setclipboard(extractedUrl)
+                    
+                    -- Visual feedback
+                    local originalColor = bubble.BackgroundColor3
+                    bubble.BackgroundColor3 = Color3.fromRGB(0, 150, 150)
+                    task.wait(0.2)
+                    bubble.BackgroundColor3 = originalColor
+                end
+            end
+            
+            -- Start hold timer
+            holdConnection = game:GetService("RunService").Heartbeat:Connect(function(dt)
+                if isHolding then
+                    holdTime = holdTime + dt
+                    
+                    -- After 2 seconds, copy message
+                    if holdTime >= 2 then
+                        isHolding = false
+                        holdConnection:Disconnect()
+                        
+                        -- Copy message to clipboard
+                        if setclipboard then
+                            setclipboard(message)
+                            
+                            -- Visual feedback
+                            local originalColor = bubble.BackgroundColor3
+                            bubble.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+                            task.wait(0.3)
+                            bubble.BackgroundColor3 = originalColor
+                            
+                            -- Show copied notification
+                            local copiedLabel = Instance.new("TextLabel")
+                            copiedLabel.Size = UDim2.new(0, 80, 0, 20)
+                            copiedLabel.Position = UDim2.new(0.5, -40, 0.5, -10)
+                            copiedLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+                            copiedLabel.BackgroundTransparency = 0.3
+                            copiedLabel.Text = "✓ Copied"
+                            copiedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                            copiedLabel.Font = Enum.Font.GothamBold
+                            copiedLabel.TextSize = 10
+                            copiedLabel.Parent = bubble
+                            
+                            local copiedCorner = Instance.new("UICorner")
+                            copiedCorner.CornerRadius = UDim.new(0, 5)
+                            copiedCorner.Parent = copiedLabel
+                            
+                            task.wait(1.5)
+                            copiedLabel:Destroy()
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+    
+    bubble.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isHolding = false
+            if holdConnection then
+                holdConnection:Disconnect()
+            end
+        end
+    end)
+    
+    -- Join button (only show with header and use TeleportToPlaceInstance properly)
     if showHeader and not isMe and inviteData and verifyInviteLink(inviteData) then
         local joinBtn = Instance.new("TextButton")
         joinBtn.Size = UDim2.new(0, 50, 0, 24)
@@ -465,20 +586,64 @@ local function createMessageBubble(username, displayName, message, game, timesta
         
         joinBtn.MouseButton1Click:Connect(function()
             local placeId, jobId = inviteData:match("^(%d+)|(.+)$")
-            if placeId and jobId then
+            if placeId and jobId and tonumber(placeId) then
                 joinBtn.Text = "..."
                 joinBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
                 
-                local success = pcall(function()
+                -- Multiple teleport methods for better compatibility
+                local teleportSuccess = false
+                
+                -- Method 1: Try TeleportToPlaceInstance (requires permission)
+                local method1 = pcall(function()
                     TeleportService:TeleportToPlaceInstance(tonumber(placeId), jobId, LocalPlayer)
+                    teleportSuccess = true
                 end)
                 
-                if not success then
-                    joinBtn.Text = "✗"
-                    joinBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-                    task.wait(2)
-                    joinBtn.Text = "Join"
-                    joinBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+                -- Method 2: If method 1 fails, try ReservedTeleportToPlace
+                if not method1 then
+                    local method2 = pcall(function()
+                        local code = TeleportService:ReserveServer(tonumber(placeId))
+                        TeleportService:TeleportToPrivateServer(tonumber(placeId), code, {LocalPlayer})
+                        teleportSuccess = true
+                    end)
+                end
+                
+                -- Method 3: If all fail, try copying link and using regular teleport
+                if not teleportSuccess then
+                    local method3 = pcall(function()
+                        if setclipboard then
+                            setclipboard(inviteData)
+                        end
+                        TeleportService:Teleport(tonumber(placeId), LocalPlayer)
+                    end)
+                    
+                    if not method3 then
+                        joinBtn.Text = "✗"
+                        joinBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+                        
+                        -- Show error message
+                        local errorLabel = Instance.new("TextLabel")
+                        errorLabel.Size = UDim2.new(0, 150, 0, 30)
+                        errorLabel.Position = UDim2.new(1, -155, 0, -35)
+                        errorLabel.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+                        errorLabel.BackgroundTransparency = 0.2
+                        errorLabel.Text = "Can't join. Link copied!"
+                        errorLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                        errorLabel.Font = Enum.Font.GothamBold
+                        errorLabel.TextSize = 9
+                        errorLabel.TextWrapped = true
+                        errorLabel.Parent = messageContainer
+                        
+                        local errorCorner = Instance.new("UICorner")
+                        errorCorner.CornerRadius = UDim.new(0, 5)
+                        errorCorner.Parent = errorLabel
+                        
+                        task.wait(3)
+                        errorLabel:Destroy()
+                        
+                        joinBtn.Text = "Join"
+                        joinBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+                    end
                 end
             end
         end)
