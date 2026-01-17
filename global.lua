@@ -27,6 +27,7 @@ local isMinimized = false
 local currentGameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
 local currentJobId = game.JobId
 local isAutoScrollEnabled = true
+local lastSenderUsername = nil  -- Track last message sender
 
 -- Generate proper invite link (PlaceId|JobId format)
 local inviteLink = tostring(game.PlaceId) .. "|" .. tostring(game.JobId)
@@ -338,6 +339,10 @@ end
 
 local function createMessageBubble(username, displayName, message, game, timestamp, inviteData)
     local isMe = (username == LocalPlayer.Name)
+    local showHeader = (lastSenderUsername ~= username)  -- Show header only if sender changed
+    
+    -- Update last sender
+    lastSenderUsername = username
     
     local msgFrame = Instance.new("Frame")
     msgFrame.Size = UDim2.new(1, -8, 0, 0)
@@ -347,68 +352,72 @@ local function createMessageBubble(username, displayName, message, game, timesta
     
     local msgLayout = Instance.new("UIListLayout")
     msgLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    msgLayout.Padding = UDim.new(0, 3)
+    msgLayout.Padding = UDim.new(0, showHeader and 3 or 2)
     msgLayout.Parent = msgFrame
     
-    -- Header
-    local headerFrame = Instance.new("Frame")
-    headerFrame.Size = UDim2.new(1, 0, 0, 16)
-    headerFrame.BackgroundTransparency = 1
-    headerFrame.LayoutOrder = 1
-    headerFrame.Parent = msgFrame
-    
-    -- Avatar
-    local avatar = Instance.new("ImageLabel")
-    avatar.Size = UDim2.new(0, 16, 0, 16)
-    avatar.Position = isMe and UDim2.new(1, -16, 0, 0) or UDim2.new(0, 0, 0, 0)
-    avatar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    avatar.BorderSizePixel = 0
-    avatar.Image = ""
-    avatar.Parent = headerFrame
-    
-    local avatarCorner = Instance.new("UICorner")
-    avatarCorner.CornerRadius = UDim.new(1, 0)
-    avatarCorner.Parent = avatar
-    
-    -- Load avatar with optimized caching
-    task.spawn(function()
-        local player = Players:FindFirstChild(username)
-        local userId = player and player.UserId or getUserIdFromUsername(username)
+    -- Header (only show if sender changed)
+    if showHeader then
+        local headerFrame = Instance.new("Frame")
+        headerFrame.Size = UDim2.new(1, 0, 0, 16)
+        headerFrame.BackgroundTransparency = 1
+        headerFrame.LayoutOrder = 1
+        headerFrame.Parent = msgFrame
         
-        if userId then
-            local avatarUrl = getPlayerAvatar(userId)
-            if avatarUrl ~= "" then
-                avatar.Image = avatarUrl
+        -- Avatar
+        local avatar = Instance.new("ImageLabel")
+        avatar.Size = UDim2.new(0, 16, 0, 16)
+        avatar.Position = isMe and UDim2.new(1, -16, 0, 0) or UDim2.new(0, 0, 0, 0)
+        avatar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        avatar.BorderSizePixel = 0
+        avatar.Image = ""
+        avatar.Parent = headerFrame
+        
+        local avatarCorner = Instance.new("UICorner")
+        avatarCorner.CornerRadius = UDim.new(1, 0)
+        avatarCorner.Parent = avatar
+        
+        -- Load avatar with optimized caching
+        task.spawn(function()
+            local player = Players:FindFirstChild(username)
+            local userId = player and player.UserId or getUserIdFromUsername(username)
+            
+            if userId then
+                local avatarUrl = getPlayerAvatar(userId)
+                if avatarUrl ~= "" then
+                    avatar.Image = avatarUrl
+                end
             end
-        end
-    end)
-    
-    -- Header text
-    local headerLabel = Instance.new("TextLabel")
-    headerLabel.Size = UDim2.new(1, -20, 1, 0)
-    headerLabel.Position = isMe and UDim2.new(0, 0, 0, 0) or UDim2.new(0, 20, 0, 0)
-    headerLabel.BackgroundTransparency = 1
-    
-    local timeStr = timestamp:match("T(%d%d:%d%d)") or "??:??"
-    headerLabel.Text = displayName .. " • " .. game .. " • " .. timeStr
-    headerLabel.TextColor3 = isMe and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(255, 200, 100)
-    headerLabel.Font = Enum.Font.GothamBold
-    headerLabel.TextSize = 9
-    headerLabel.TextXAlignment = isMe and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
-    headerLabel.Parent = headerFrame
+        end)
+        
+        -- Header text
+        local headerLabel = Instance.new("TextLabel")
+        headerLabel.Size = UDim2.new(1, -20, 1, 0)
+        headerLabel.Position = isMe and UDim2.new(0, 0, 0, 0) or UDim2.new(0, 20, 0, 0)
+        headerLabel.BackgroundTransparency = 1
+        
+        local timeStr = timestamp:match("T(%d%d:%d%d)") or "??:??"
+        headerLabel.Text = displayName .. " • " .. game .. " • " .. timeStr
+        headerLabel.TextColor3 = isMe and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(255, 200, 100)
+        headerLabel.Font = Enum.Font.GothamBold
+        headerLabel.TextSize = 9
+        headerLabel.TextXAlignment = isMe and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
+        headerLabel.Parent = headerFrame
+    end
     
     -- Message container
     local messageContainer = Instance.new("Frame")
     messageContainer.Size = UDim2.new(1, 0, 0, 0)
     messageContainer.BackgroundTransparency = 1
     messageContainer.AutomaticSize = Enum.AutomaticSize.Y
-    messageContainer.LayoutOrder = 2
+    messageContainer.LayoutOrder = showHeader and 2 or 1
     messageContainer.Parent = msgFrame
     
-    -- Bubble
+    -- Bubble (add left margin if same sender and not me)
+    local bubbleLeftMargin = (not showHeader and not isMe) and 20 or 0
+    
     local bubble = Instance.new("Frame")
     bubble.Size = UDim2.new(0.78, 0, 0, 0)
-    bubble.Position = isMe and UDim2.new(0.22, 0, 0, 0) or UDim2.new(0, 0, 0, 0)
+    bubble.Position = isMe and UDim2.new(0.22, 0, 0, 0) or UDim2.new(0, bubbleLeftMargin, 0, 0)
     bubble.BackgroundColor3 = isMe and Color3.fromRGB(50, 100, 200) or Color3.fromRGB(50, 50, 50)
     bubble.AutomaticSize = Enum.AutomaticSize.Y
     bubble.BorderSizePixel = 0
@@ -438,8 +447,8 @@ local function createMessageBubble(username, displayName, message, game, timesta
     msgLabel.AutomaticSize = Enum.AutomaticSize.Y
     msgLabel.Parent = bubble
     
-    -- Join button
-    if not isMe and inviteData and verifyInviteLink(inviteData) then
+    -- Join button (only show with header)
+    if showHeader and not isMe and inviteData and verifyInviteLink(inviteData) then
         local joinBtn = Instance.new("TextButton")
         joinBtn.Size = UDim2.new(0, 50, 0, 24)
         joinBtn.Position = UDim2.new(1, -54, 0, 0)
