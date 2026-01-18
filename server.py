@@ -37,15 +37,21 @@ def is_owner(username):
 # Database connection
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
+# ✅ FIX: Convert postgres:// to postgresql:// for psycopg2
+if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    print("✅ Fixed DATABASE_URL format (postgres:// → postgresql://)")
+
 def get_db_connection():
     """Create database connection"""
     if not DATABASE_URL:
+        print("❌ DATABASE_URL is not set")
         return None
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
     except Exception as e:
-        print(f"Database connection error: {e}")
+        print(f"❌ Database connection error: {e}")
         return None
 
 def init_database():
@@ -62,6 +68,7 @@ def init_database():
             
         cur = conn.cursor()
         
+        print("📦 Creating messages table...")
         # Create messages table
         cur.execute('''
             CREATE TABLE IF NOT EXISTS messages (
@@ -76,6 +83,7 @@ def init_database():
             )
         ''')
         
+        print("📦 Creating banned_users table...")
         # Create banned users table
         cur.execute('''
             CREATE TABLE IF NOT EXISTS banned_users (
@@ -86,6 +94,7 @@ def init_database():
             )
         ''')
         
+        print("📦 Creating indexes...")
         # Create index for faster queries
         cur.execute('''
             CREATE INDEX IF NOT EXISTS idx_timestamp 
@@ -95,10 +104,12 @@ def init_database():
         conn.commit()
         cur.close()
         conn.close()
-        print("✅ Database initialized successfully")
+        print("✅ Database initialized successfully!")
         return True
     except Exception as e:
         print(f"❌ Database initialization error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 @app.route('/', methods=['GET'])
@@ -110,6 +121,21 @@ def home():
         "features": ["ranks", "persistent_storage", "moderation"],
         "version": "2.0"
     })
+
+@app.route('/setup', methods=['GET'])
+def setup_database():
+    """Manually trigger database setup"""
+    print("🔧 Manual database setup triggered...")
+    if init_database():
+        return jsonify({
+            "success": True,
+            "message": "Database initialized successfully"
+        })
+    else:
+        return jsonify({
+            "success": False,
+            "message": "Database initialization failed - check logs"
+        }), 500
 
 @app.route('/send', methods=['POST'])
 def send_message():
@@ -178,6 +204,7 @@ def send_message():
         }), 201
         
     except Exception as e:
+        print(f"❌ Send message error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/messages', methods=['GET'])
@@ -233,6 +260,7 @@ def get_messages():
         })
         
     except Exception as e:
+        print(f"❌ Get messages error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/ranks', methods=['GET'])
@@ -284,6 +312,7 @@ def get_stats():
         })
         
     except Exception as e:
+        print(f"❌ Stats error: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ============ MODERATION ENDPOINTS (Staff Only) ============
@@ -483,19 +512,27 @@ def shutdown():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("🚀 Starting Universal Roblox Chat Server v2.0...")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     
     if DATABASE_URL:
-        print("📦 DATABASE_URL found, initializing database...")
+        print("📦 DATABASE_URL found!")
+        print("🔗 Initializing database...")
         if init_database():
             print("✅ Database ready!")
         else:
-            print("⚠️  Database initialization had issues, but continuing...")
+            print("⚠️  Database initialization had issues")
+            print("💡 Try visiting /setup endpoint to manually initialize")
     else:
-        print("⚠️  WARNING: DATABASE_URL not set - app will not work properly!")
+        print("⚠️  WARNING: DATABASE_URL not set!")
+        print("❌ App will not work without database!")
     
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     port = int(os.environ.get('PORT', 10000))
     print(f"🌐 Starting server on port {port}...")
     print(f"👑 Owners: foffasfieifro, Ya_shumi09")
     print(f"🛡️  Mods: shimul2222222")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    
     app.run(host='0.0.0.0', port=port)
