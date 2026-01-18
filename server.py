@@ -2,23 +2,32 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import requests
+from collections import deque
 
 app = Flask(__name__)
 CORS(app)
 
-# 👑 RANK SYSTEM - YOUR ACTUAL USERNAMES
+# 🎮 DISCORD WEBHOOK
+DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL', 'https://discord.com/api/webhooks/1462283894614266081/NqLdezNsQ-gNh731Up-omLEiM7HOgV9RS_VjQPp19ajkeKx9-Fea6MlN0NFqt0Oux7ok')
+
+# 👑 RANK SYSTEM
 RANKS = {
-    "foffasfieifro": {"rank": "Owner", "emoji": "👑", "color": "#FFD700", "level": 3},
-    "Ya_shumi09": {"rank": "Owner", "emoji": "👑", "color": "#FFD700", "level": 3},
-    "shimul2222222": {"rank": "Mod", "emoji": "🛡️", "color": "#4ECDC4", "level": 2},
+    "foffasfieifro": {"rank": "Owner", "emoji": "👑", "color": "#FFD700", "level": 3, "discord_color": 16766720},
+    "Ya_shumi09": {"rank": "Owner", "emoji": "👑", "color": "#FFD700", "level": 3, "discord_color": 16766720},
+    "shimul2222222": {"rank": "Mod", "emoji": "🛡️", "color": "#4ECDC4", "level": 2, "discord_color": 5164228},
 }
 
-DEFAULT_RANK = {"rank": "Member", "emoji": "👤", "color": "#CCCCCC", "level": 0}
+DEFAULT_RANK = {"rank": "Member", "emoji": "👤", "color": "#CCCCCC", "level": 0, "discord_color": 13421772}
 
-# Banned users list (muted)
-BANNED_USERS = set()
+# 💾 IN-MEMORY STORAGE
+messages = deque(maxlen=200)  # Keep last 200 messages
+banned_users = {}  # {username: {banned_by, reason, timestamp}}
+stats = {
+    "total_messages": 0,
+    "unique_users": set(),
+    "server_start_time": datetime.now()
+}
 
 def get_user_rank(username):
     """Get rank info for a user"""
@@ -34,112 +43,64 @@ def is_owner(username):
     rank_info = get_user_rank(username)
     return rank_info.get('level', 0) >= 3
 
-# Database connection
-DATABASE_URL = os.environ.get('DATABASE_URL')
-
-# ✅ FIX: Convert postgres:// to postgresql:// for psycopg2
-if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
-    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-    print("✅ Fixed DATABASE_URL format (postgres:// → postgresql://)")
-
-def get_db_connection():
-    """Create database connection"""
-    if not DATABASE_URL:
-        print("❌ DATABASE_URL is not set")
-        return None
+def send_to_discord(content=None, embed=None):
+    """Send message to Discord webhook"""
     try:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-        return conn
+        data = {}
+        if content:
+            data['content'] = content
+        if embed:
+            data['embeds'] = [embed]
+        
+        response = requests.post(DISCORD_WEBHOOK_URL, json=data, timeout=5)
+        return response.status_code == 204
     except Exception as e:
-        print(f"❌ Database connection error: {e}")
-        return None
+        print(f"❌ Discord webhook error: {e}")
+        return False
 
-def init_database():
-    """Initialize database table if it doesn't exist"""
-    if not DATABASE_URL:
-        print("⚠️  WARNING: DATABASE_URL not set - skipping database initialization")
-        return False
-    
-    try:
-        conn = get_db_connection()
-        if not conn:
-            print("❌ Could not connect to database")
-            return False
-            
-        cur = conn.cursor()
-        
-        print("📦 Creating messages table...")
-        # Create messages table
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS messages (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(50) NOT NULL,
-                message TEXT NOT NULL,
-                game VARCHAR(100) NOT NULL,
-                rank VARCHAR(50),
-                rank_emoji VARCHAR(10),
-                rank_color VARCHAR(7),
-                timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        print("📦 Creating banned_users table...")
-        # Create banned users table
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS banned_users (
-                username VARCHAR(50) PRIMARY KEY,
-                banned_by VARCHAR(50),
-                reason TEXT,
-                banned_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        print("📦 Creating indexes...")
-        # Create index for faster queries
-        cur.execute('''
-            CREATE INDEX IF NOT EXISTS idx_timestamp 
-            ON messages(timestamp DESC)
-        ''')
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("✅ Database initialized successfully!")
-        return True
-    except Exception as e:
-        print(f"❌ Database initialization error: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+def create_message_embed(username, message, game, rank_info):
+    """Create Discord embed for chat message"""
+    return {
+        "title": f"{rank_info['emoji']} {rank_info['rank']}: {username}",
+        "description": message,
+        "color": rank_info.get('discord_color', 13421772),
+        "fields": [
+            {"name": "Game", "value": game, "inline": True},
+            {"name": "Time", "value": datetime.now().strftime("%H:%M:%S"), "inline": True}
+        ],
+        "footer": {"text": "Universal Roblox Chat"}
+    }
+
+def create_mod_embed(action, moderator, details, color=16744192):
+    """Create Discord embed for moderation action"""
+    return {
+        "title": f"🛡️ Moderation Action: {action}",
+        "description": details,
+        "color": color,
+        "fields": [
+            {"name": "Moderator", "value": moderator, "inline": True},
+            {"name": "Time", "value": datetime.now().strftime("%H:%M:%S %d/%m/%Y"), "inline": True}
+        ],
+        "footer": {"text": "Mod Log"}
+    }
 
 @app.route('/', methods=['GET'])
 def home():
+    uptime = datetime.now() - stats["server_start_time"]
     return jsonify({
         "status": "online",
         "service": "Universal Roblox Chat",
-        "database": "PostgreSQL Connected" if DATABASE_URL else "Not configured",
-        "features": ["ranks", "persistent_storage", "moderation"],
-        "version": "2.0"
+        "storage": "In-Memory (No Database)",
+        "features": ["ranks", "discord_logging", "moderation"],
+        "version": "3.0",
+        "uptime_seconds": int(uptime.total_seconds()),
+        "messages_stored": len(messages),
+        "discord_webhook": "Connected" if DISCORD_WEBHOOK_URL else "Not configured"
     })
-
-@app.route('/setup', methods=['GET'])
-def setup_database():
-    """Manually trigger database setup"""
-    print("🔧 Manual database setup triggered...")
-    if init_database():
-        return jsonify({
-            "success": True,
-            "message": "Database initialized successfully"
-        })
-    else:
-        return jsonify({
-            "success": False,
-            "message": "Database initialization failed - check logs"
-        }), 500
 
 @app.route('/send', methods=['POST'])
 def send_message():
-    """Endpoint to send a message"""
+    """Send a message"""
     try:
         data = request.get_json()
         
@@ -151,112 +112,64 @@ def send_message():
         game = str(data.get('game', 'Unknown'))[:100]
         
         # Check if user is banned
-        if username in BANNED_USERS:
+        if username in banned_users:
             return jsonify({"error": "You are muted from the chat"}), 403
-        
-        # Check database for banned users
-        conn = get_db_connection()
-        if conn:
-            cur = conn.cursor()
-            cur.execute('SELECT username FROM banned_users WHERE username = %s', (username,))
-            if cur.fetchone():
-                cur.close()
-                conn.close()
-                BANNED_USERS.add(username)
-                return jsonify({"error": "You are muted from the chat"}), 403
-            cur.close()
-            conn.close()
         
         # Get user rank
         rank_info = get_user_rank(username)
         
-        # Save to database
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({"error": "Database connection failed"}), 500
-            
-        cur = conn.cursor()
+        # Create message object
+        msg_obj = {
+            "id": stats["total_messages"] + 1,
+            "username": username,
+            "message": message,
+            "game": game,
+            "rank": rank_info['rank'],
+            "rank_emoji": rank_info['emoji'],
+            "rank_color": rank_info['color'],
+            "timestamp": datetime.now().isoformat()
+        }
         
-        cur.execute(
-            '''INSERT INTO messages (username, message, game, rank, rank_emoji, rank_color) 
-               VALUES (%s, %s, %s, %s, %s, %s) RETURNING id, timestamp''',
-            (username, message, game, rank_info['rank'], rank_info['emoji'], rank_info['color'])
-        )
+        # Save to memory
+        messages.append(msg_obj)
+        stats["total_messages"] += 1
+        stats["unique_users"].add(username)
         
-        result = cur.fetchone()
-        conn.commit()
-        cur.close()
-        conn.close()
+        # Send to Discord
+        embed = create_message_embed(username, message, game, rank_info)
+        send_to_discord(embed=embed)
         
         return jsonify({
             "success": True,
             "message": "Message sent",
-            "data": {
-                "id": result['id'],
-                "username": username,
-                "message": message,
-                "game": game,
-                "rank": rank_info['rank'],
-                "rank_emoji": rank_info['emoji'],
-                "rank_color": rank_info['color'],
-                "timestamp": result['timestamp'].isoformat()
-            }
+            "data": msg_obj
         }), 201
         
     except Exception as e:
-        print(f"❌ Send message error: {e}")
+        print(f"❌ Send error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/messages', methods=['GET'])
 def get_messages():
-    """Endpoint to get messages"""
+    """Get recent messages"""
     try:
         since = request.args.get('since')
         limit = request.args.get('limit', 20, type=int)
+        limit = min(limit, 200)
         
-        limit = min(limit, 100)
-        
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({"error": "Database connection failed"}), 500
-            
-        cur = conn.cursor()
-        
+        # Filter messages
         if since:
-            cur.execute(
-                '''SELECT id, username, message, game, rank, rank_emoji, rank_color, timestamp 
-                   FROM messages WHERE timestamp > %s ORDER BY timestamp DESC LIMIT %s''',
-                (since, limit)
-            )
+            filtered = [msg for msg in messages if msg['timestamp'] > since]
         else:
-            cur.execute(
-                '''SELECT id, username, message, game, rank, rank_emoji, rank_color, timestamp 
-                   FROM messages ORDER BY timestamp DESC LIMIT %s''',
-                (limit,)
-            )
+            filtered = list(messages)
         
-        messages = cur.fetchall()
-        
-        messages_list = []
-        for msg in reversed(messages):
-            messages_list.append({
-                "id": msg['id'],
-                "username": msg['username'],
-                "message": msg['message'],
-                "game": msg['game'],
-                "rank": msg['rank'] or "Member",
-                "rank_emoji": msg['rank_emoji'] or "👤",
-                "rank_color": msg['rank_color'] or "#CCCCCC",
-                "timestamp": msg['timestamp'].isoformat()
-            })
-        
-        cur.close()
-        conn.close()
+        # Get last N messages
+        recent = filtered[-limit:] if len(filtered) > limit else filtered
         
         return jsonify({
             "success": True,
-            "count": len(messages_list),
-            "messages": messages_list
+            "count": len(recent),
+            "messages": recent
         })
         
     except Exception as e:
@@ -282,40 +195,17 @@ def get_ranks():
 @app.route('/stats', methods=['GET'])
 def get_stats():
     """Get chat statistics"""
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({"error": "Database connection failed"}), 500
-            
-        cur = conn.cursor()
-        
-        cur.execute('SELECT COUNT(*) as total FROM messages')
-        total = cur.fetchone()['total']
-        
-        cur.execute('SELECT COUNT(DISTINCT username) as users FROM messages')
-        users = cur.fetchone()['users']
-        
-        cur.execute('SELECT COUNT(*) as today FROM messages WHERE DATE(timestamp) = CURRENT_DATE')
-        today = cur.fetchone()['today']
-        
-        cur.execute('SELECT COUNT(*) as banned FROM banned_users')
-        banned = cur.fetchone()['banned']
-        
-        cur.close()
-        conn.close()
-        
-        return jsonify({
-            "total_messages": total,
-            "unique_users": users,
-            "messages_today": today,
-            "banned_users": banned
-        })
-        
-    except Exception as e:
-        print(f"❌ Stats error: {e}")
-        return jsonify({"error": str(e)}), 500
+    uptime = datetime.now() - stats["server_start_time"]
+    return jsonify({
+        "total_messages": stats["total_messages"],
+        "unique_users": len(stats["unique_users"]),
+        "messages_in_memory": len(messages),
+        "banned_users": len(banned_users),
+        "uptime_hours": round(uptime.total_seconds() / 3600, 2),
+        "server_start": stats["server_start_time"].isoformat()
+    })
 
-# ============ MODERATION ENDPOINTS (Staff Only) ============
+# ============ MODERATION ENDPOINTS ============
 
 @app.route('/clear', methods=['POST'])
 def clear_messages():
@@ -327,18 +217,17 @@ def clear_messages():
         if not username or not is_staff(username):
             return jsonify({"error": "Unauthorized - Staff only"}), 403
         
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({"error": "Database connection failed"}), 500
-            
-        cur = conn.cursor()
+        deleted = len(messages)
+        messages.clear()
         
-        cur.execute('DELETE FROM messages')
-        deleted = cur.rowcount
-        
-        conn.commit()
-        cur.close()
-        conn.close()
+        # Log to Discord
+        embed = create_mod_embed(
+            "CLEAR",
+            username,
+            f"Cleared {deleted} messages from chat",
+            16744192  # Orange
+        )
+        send_to_discord(embed=embed)
         
         return jsonify({
             "success": True,
@@ -351,7 +240,7 @@ def clear_messages():
 
 @app.route('/mute', methods=['POST'])
 def mute_user():
-    """Mute/ban a user from chat (Staff only)"""
+    """Mute a user (Staff only)"""
     try:
         data = request.get_json()
         moderator = data.get('moderator')
@@ -364,36 +253,27 @@ def mute_user():
         if not target_user:
             return jsonify({"error": "Missing target_user"}), 400
         
-        # Can't ban staff members
         if is_staff(target_user):
             return jsonify({"error": "Cannot mute staff members"}), 400
         
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({"error": "Database connection failed"}), 500
-            
-        cur = conn.cursor()
-        
-        # Check if already banned
-        cur.execute('SELECT username FROM banned_users WHERE username = %s', (target_user,))
-        if cur.fetchone():
-            cur.close()
-            conn.close()
+        if target_user in banned_users:
             return jsonify({"error": "User is already muted"}), 400
         
         # Add to banned list
-        cur.execute(
-            '''INSERT INTO banned_users (username, banned_by, reason) 
-               VALUES (%s, %s, %s)''',
-            (target_user, moderator, reason)
+        banned_users[target_user] = {
+            "banned_by": moderator,
+            "reason": reason,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Log to Discord
+        embed = create_mod_embed(
+            "MUTE",
+            moderator,
+            f"**Target:** {target_user}\n**Reason:** {reason}",
+            15158332  # Red
         )
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        # Add to in-memory set
-        BANNED_USERS.add(target_user)
+        send_to_discord(embed=embed)
         
         return jsonify({
             "success": True,
@@ -407,7 +287,7 @@ def mute_user():
 
 @app.route('/unmute', methods=['POST'])
 def unmute_user():
-    """Unmute/unban a user (Staff only)"""
+    """Unmute a user (Staff only)"""
     try:
         data = request.get_json()
         moderator = data.get('moderator')
@@ -419,25 +299,20 @@ def unmute_user():
         if not target_user:
             return jsonify({"error": "Missing target_user"}), 400
         
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({"error": "Database connection failed"}), 500
-            
-        cur = conn.cursor()
+        if target_user not in banned_users:
+            return jsonify({"error": "User was not muted"}), 400
         
         # Remove from banned list
-        cur.execute('DELETE FROM banned_users WHERE username = %s', (target_user,))
-        deleted = cur.rowcount
+        del banned_users[target_user]
         
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        # Remove from in-memory set
-        BANNED_USERS.discard(target_user)
-        
-        if deleted == 0:
-            return jsonify({"error": "User was not muted"}), 400
+        # Log to Discord
+        embed = create_mod_embed(
+            "UNMUTE",
+            moderator,
+            f"**Target:** {target_user}\nUser has been unmuted",
+            3066993  # Green
+        )
+        send_to_discord(embed=embed)
         
         return jsonify({
             "success": True,
@@ -457,31 +332,14 @@ def get_banned_users():
         if not username or not is_staff(username):
             return jsonify({"error": "Unauthorized - Staff only"}), 403
         
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({"error": "Database connection failed"}), 500
-            
-        cur = conn.cursor()
-        
-        cur.execute('''
-            SELECT username, banned_by, reason, banned_at 
-            FROM banned_users 
-            ORDER BY banned_at DESC
-        ''')
-        
-        banned = cur.fetchall()
-        
         banned_list = []
-        for user in banned:
+        for user, info in banned_users.items():
             banned_list.append({
-                "username": user['username'],
-                "banned_by": user['banned_by'],
-                "reason": user['reason'],
-                "banned_at": user['banned_at'].isoformat()
+                "username": user,
+                "banned_by": info['banned_by'],
+                "reason": info['reason'],
+                "banned_at": info['timestamp']
             })
-        
-        cur.close()
-        conn.close()
         
         return jsonify({
             "success": True,
@@ -494,7 +352,7 @@ def get_banned_users():
 
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
-    """Shutdown the server (Owners only)"""
+    """Shutdown notification (Owners only)"""
     try:
         data = request.get_json()
         username = data.get('username')
@@ -502,10 +360,12 @@ def shutdown():
         if not username or not is_owner(username):
             return jsonify({"error": "Unauthorized - Owners only"}), 403
         
+        # Log to Discord
+        send_to_discord(content=f"🔴 **Server shutdown requested by {username}**")
+        
         return jsonify({
             "success": True,
-            "message": "Server shutdown initiated by " + username,
-            "note": "On Render, the server will automatically restart"
+            "message": f"Shutdown notification sent by {username}"
         })
         
     except Exception as e:
@@ -513,26 +373,19 @@ def shutdown():
 
 if __name__ == '__main__':
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("🚀 Starting Universal Roblox Chat Server v2.0...")
+    print("🚀 Universal Roblox Chat Server v3.0")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    
-    if DATABASE_URL:
-        print("📦 DATABASE_URL found!")
-        print("🔗 Initializing database...")
-        if init_database():
-            print("✅ Database ready!")
-        else:
-            print("⚠️  Database initialization had issues")
-            print("💡 Try visiting /setup endpoint to manually initialize")
-    else:
-        print("⚠️  WARNING: DATABASE_URL not set!")
-        print("❌ App will not work without database!")
-    
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    port = int(os.environ.get('PORT', 10000))
-    print(f"🌐 Starting server on port {port}...")
+    print("💾 Storage: In-Memory (No Database)")
+    print(f"🎮 Discord Webhook: {'✅ Connected' if DISCORD_WEBHOOK_URL else '❌ Not Set'}")
     print(f"👑 Owners: foffasfieifro, Ya_shumi09")
     print(f"🛡️  Mods: shimul2222222")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    
+    # Send startup notification to Discord
+    send_to_discord(content="🟢 **Universal Roblox Chat Server Started!**")
+    
+    port = int(os.environ.get('PORT', 10000))
+    print(f"🌐 Server running on port {port}")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     
     app.run(host='0.0.0.0', port=port)
