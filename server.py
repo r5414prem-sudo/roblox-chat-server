@@ -8,8 +8,8 @@ from collections import deque
 app = Flask(__name__)
 CORS(app)
 
-# 🎮 DISCORD WEBHOOK
-DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL', 'https://discord.com/api/webhooks/1462283894614266081/NqLdezNsQ-gNh731Up-omLEiM7HOgV9RS_VjQPp19ajkeKx9-Fea6MlN0NFqt0Oux7ok')
+# 🎮 DISCORD WEBHOOK (from environment variable - NO hardcoded URL!)
+DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
 
 # 👑 RANK SYSTEM
 RANKS = {
@@ -45,6 +45,10 @@ def is_owner(username):
 
 def send_to_discord(content=None, embed=None):
     """Send message to Discord webhook"""
+    if not DISCORD_WEBHOOK_URL:
+        print("⚠️ Discord webhook not configured")
+        return False
+    
     try:
         data = {}
         if content:
@@ -376,13 +380,19 @@ if __name__ == '__main__':
     print("🚀 Universal Roblox Chat Server v3.0")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("💾 Storage: In-Memory (No Database)")
-    print(f"🎮 Discord Webhook: {'✅ Connected' if DISCORD_WEBHOOK_URL else '❌ Not Set'}")
+    
+    if DISCORD_WEBHOOK_URL:
+        print("🎮 Discord Webhook: ✅ Connected")
+    else:
+        print("🎮 Discord Webhook: ❌ Not Set (Set DISCORD_WEBHOOK_URL env variable)")
+    
     print(f"👑 Owners: foffasfieifro, Ya_shumi09")
     print(f"🛡️  Mods: shimul2222222")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     
     # Send startup notification to Discord
-    send_to_discord(content="🟢 **Universal Roblox Chat Server Started!**")
+    if DISCORD_WEBHOOK_URL:
+        send_to_discord(content="🟢 **Universal Roblox Chat Server Started!**")
     
     port = int(os.environ.get('PORT', 10000))
     print(f"🌐 Server running on port {port}")
