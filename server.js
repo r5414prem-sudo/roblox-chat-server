@@ -1,241 +1,374 @@
 // ═══════════════════════════════════════════════════════════
-//  🌐 UNIVERSAL ROBLOX CHAT SERVER - NODE.JS
-//  High-performance backend with Express.js
-//  Version 2.0.0
+//  🌐 UNIVERSAL ROBLOX CHAT SERVER
+//  Clean, Organized & Well-Documented
+//  Version 2.1.0
 // ═══════════════════════════════════════════════════════════
 
 const express = require('express');
 const cors = require('cors');
 const app = express();
 
-// Configuration
-const PORT = process.env.PORT || 10000;
-const MAX_MESSAGES = 200;
-const MAX_MESSAGE_LENGTH = 500;
-const MAX_USERNAME_LENGTH = 50;
-const MAX_GAME_LENGTH = 100;
-
-// Middleware
-app.use(cors()); // Enable CORS for all routes
-app.use(express.json()); // Parse JSON bodies
-
-// In-Memory Storage
-const messages = [];
-const activeUsers = new Map();
-let totalMessages = 0;
-const serverStartTime = new Date();
-
 // ═══════════════════════════════════════════════════════════
-//  UTILITY FUNCTIONS
+//  ⚙️ CONFIGURATION
 // ═══════════════════════════════════════════════════════════
 
-/**
- * Sanitize and limit string length
- */
-function sanitize(str, maxLength) {
-    if (!str) return '';
-    str = str.trim();
-    return str.length > maxLength ? str.substring(0, maxLength) : str;
-}
+const CONFIG = {
+    PORT: process.env.PORT || 10000,
+    MAX_MESSAGES: 1000,              // Increased from 200
+    MAX_MESSAGE_LENGTH: 500,
+    MAX_USERNAME_LENGTH: 50,
+    MAX_GAME_LENGTH: 100,
+    CLEANUP_INTERVAL: 5 * 60 * 1000, // 5 minutes
+    USER_TIMEOUT: 10 * 60 * 1000     // 10 minutes
+};
 
-/**
- * Get current timestamp in ISO format
- */
-function getTimestamp() {
-    return new Date().toISOString();
-}
+// ═══════════════════════════════════════════════════════════
+//  📦 MIDDLEWARE
+// ═══════════════════════════════════════════════════════════
 
-/**
- * Calculate uptime in seconds
- */
-function getUptime() {
-    return Math.floor((new Date() - serverStartTime) / 1000);
-}
+app.use(cors());           // Enable CORS for Roblox
+app.use(express.json());   // Parse JSON request bodies
 
-/**
- * Update user activity
- */
-function updateUserActivity(username, game) {
-    if (!activeUsers.has(username)) {
-        activeUsers.set(username, {
-            username: username,
-            lastGame: game,
-            lastSeen: new Date(),
-            messageCount: 1
-        });
-    } else {
-        const user = activeUsers.get(username);
-        user.lastGame = game;
-        user.lastSeen = new Date();
-        user.messageCount++;
+// Request logger
+app.use((req, res, next) => {
+    console.log(`${req.method} ${req.path} - ${new Date().toISOString()}`);
+    next();
+});
+
+// ═══════════════════════════════════════════════════════════
+//  💾 DATA STORAGE
+// ═══════════════════════════════════════════════════════════
+
+const storage = {
+    messages: [],
+    activeUsers: new Map(),
+    totalMessagesSent: 0,
+    serverStartTime: new Date()
+};
+
+// ═══════════════════════════════════════════════════════════
+//  🛠️ UTILITY FUNCTIONS
+// ═══════════════════════════════════════════════════════════
+
+const utils = {
+    /**
+     * Sanitize and trim string to max length
+     */
+    sanitize(str, maxLength) {
+        if (!str) return '';
+        str = str.trim();
+        return str.length > maxLength ? str.substring(0, maxLength) : str;
+    },
+
+    /**
+     * Get current timestamp in ISO format
+     */
+    getTimestamp() {
+        return new Date().toISOString();
+    },
+
+    /**
+     * Get Unix timestamp in seconds
+     */
+    getUnixTimestamp() {
+        return Math.floor(Date.now() / 1000);
+    },
+
+    /**
+     * Calculate server uptime in seconds
+     */
+    getUptime() {
+        return Math.floor((Date.now() - storage.serverStartTime) / 1000);
+    },
+
+    /**
+     * Format uptime as human-readable string
+     */
+    formatUptime(seconds) {
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        return `${days}d ${hours}h ${mins}m`;
     }
-}
+};
 
-/**
- * Clean up inactive users (not seen in 10 minutes)
- */
-function cleanupInactiveUsers() {
-    const cutoffTime = new Date(Date.now() - 10 * 60 * 1000);
-    let removedCount = 0;
-    
-    for (const [username, user] of activeUsers.entries()) {
-        if (user.lastSeen < cutoffTime) {
-            activeUsers.delete(username);
-            removedCount++;
+// ═══════════════════════════════════════════════════════════
+//  👥 USER MANAGEMENT
+// ═══════════════════════════════════════════════════════════
+
+const userManager = {
+    /**
+     * Update user activity
+     */
+    updateActivity(username, game, userId) {
+        if (!storage.activeUsers.has(username)) {
+            storage.activeUsers.set(username, {
+                username: username,
+                userId: userId,
+                firstSeen: new Date(),
+                lastSeen: new Date(),
+                lastGame: game,
+                messageCount: 1
+            });
+            console.log(`👤 New user: ${username}`);
+        } else {
+            const user = storage.activeUsers.get(username);
+            user.lastSeen = new Date();
+            user.lastGame = game;
+            user.messageCount++;
         }
-    }
-    
-    if (removedCount > 0) {
-        console.log(`🧹 Cleaned up ${removedCount} inactive users. Active: ${activeUsers.size}`);
-    }
-}
+    },
 
-// Run cleanup every 5 minutes
-setInterval(cleanupInactiveUsers, 5 * 60 * 1000);
+    /**
+     * Remove inactive users
+     */
+    cleanupInactive() {
+        const cutoffTime = Date.now() - CONFIG.USER_TIMEOUT;
+        let removedCount = 0;
+
+        for (const [username, user] of storage.activeUsers.entries()) {
+            if (user.lastSeen.getTime() < cutoffTime) {
+                storage.activeUsers.delete(username);
+                removedCount++;
+            }
+        }
+
+        if (removedCount > 0) {
+            console.log(`🧹 Cleaned up ${removedCount} inactive users. Active: ${storage.activeUsers.size}`);
+        }
+    },
+
+    /**
+     * Get list of active users
+     */
+    getActiveUsers() {
+        return Array.from(storage.activeUsers.values());
+    }
+};
+
+// Start periodic cleanup
+setInterval(() => userManager.cleanupInactive(), CONFIG.CLEANUP_INTERVAL);
 
 // ═══════════════════════════════════════════════════════════
-//  API ENDPOINTS
+//  💬 MESSAGE MANAGEMENT
 // ═══════════════════════════════════════════════════════════
 
-/**
- * Home endpoint - Server info
- * GET /
- */
+const messageManager = {
+    /**
+     * Add new message to storage
+     */
+    addMessage(username, message, game, userId) {
+        storage.totalMessagesSent++;
+
+        const msg = {
+            id: storage.totalMessagesSent,
+            username: username,
+            message: message,
+            game: game,
+            userId: userId,
+            timestamp: utils.getUnixTimestamp()
+        };
+
+        // Add to storage
+        storage.messages.push(msg);
+
+        // Keep only last MAX_MESSAGES
+        if (storage.messages.length > CONFIG.MAX_MESSAGES) {
+            storage.messages.shift();
+        }
+
+        // Update user activity
+        userManager.updateActivity(username, game, userId);
+
+        console.log(`📨 [${game}] ${username}: ${message}`);
+
+        return msg;
+    },
+
+    /**
+     * Get messages since a timestamp
+     */
+    getMessagesSince(sinceTimestamp, limit = 50) {
+        let filtered = storage.messages;
+
+        if (sinceTimestamp) {
+            const since = parseFloat(sinceTimestamp);
+            filtered = storage.messages.filter(m => m.timestamp > since);
+        }
+
+        // Return last N messages
+        const maxLimit = Math.min(limit, CONFIG.MAX_MESSAGES);
+        return filtered.slice(-maxLimit);
+    },
+
+    /**
+     * Clear all messages
+     */
+    clearAll() {
+        const count = storage.messages.length;
+        storage.messages = [];
+        console.log(`🗑️  Cleared ${count} messages`);
+        return count;
+    },
+
+    /**
+     * Get message statistics
+     */
+    getStats() {
+        return {
+            total_messages_sent: storage.totalMessagesSent,
+            messages_in_storage: storage.messages.length,
+            active_users: storage.activeUsers.size,
+            uptime_seconds: utils.getUptime(),
+            uptime_formatted: utils.formatUptime(utils.getUptime()),
+            server_started: storage.serverStartTime.toISOString()
+        };
+    }
+};
+
+// ═══════════════════════════════════════════════════════════
+//  🔐 VALIDATION
+// ═══════════════════════════════════════════════════════════
+
+const validator = {
+    /**
+     * Validate message send request
+     */
+    validateSendRequest(body) {
+        const errors = [];
+
+        if (!body.username) errors.push('username is required');
+        if (!body.message) errors.push('message is required');
+        if (body.message && body.message.trim().length === 0) {
+            errors.push('message cannot be empty');
+        }
+        if (body.message && body.message.length > CONFIG.MAX_MESSAGE_LENGTH) {
+            errors.push(`message exceeds ${CONFIG.MAX_MESSAGE_LENGTH} characters`);
+        }
+
+        return {
+            valid: errors.length === 0,
+            errors: errors
+        };
+    }
+};
+
+// ═══════════════════════════════════════════════════════════
+//  🌐 API ROUTES
+// ═══════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────
+// GET / - Server Information
+// ─────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
     res.json({
         status: 'online',
         service: 'Universal Roblox Chat',
-        version: '2.0.0',
-        language: 'Node.js',
-        uptime_seconds: getUptime(),
-        messages_stored: messages.length,
-        active_users: activeUsers.size,
-        total_messages: totalMessages
+        version: '2.1.0',
+        storage: 'In-Memory',
+        config: {
+            max_messages: CONFIG.MAX_MESSAGES,
+            max_message_length: CONFIG.MAX_MESSAGE_LENGTH
+        },
+        stats: messageManager.getStats()
     });
 });
 
-/**
- * Send message endpoint
- * POST /send
- * Body: { username, message, game }
- */
+// ─────────────────────────────────────────────────────────
+// POST /send - Send a new message
+// ─────────────────────────────────────────────────────────
 app.post('/send', (req, res) => {
     try {
-        const { username, message, game } = req.body;
-        
-        // Validate input
-        if (!username || !message) {
+        // Validate request
+        const validation = validator.validateSendRequest(req.body);
+        if (!validation.valid) {
             return res.status(400).json({
-                error: 'Missing username or message'
+                success: false,
+                error: 'Validation failed',
+                details: validation.errors
             });
         }
-        
+
         // Sanitize input
-        const cleanUsername = sanitize(username, MAX_USERNAME_LENGTH);
-        const cleanMessage = sanitize(message, MAX_MESSAGE_LENGTH);
-        const cleanGame = sanitize(game || 'Unknown', MAX_GAME_LENGTH);
-        
-        if (!cleanUsername || !cleanMessage) {
-            return res.status(400).json({
-                error: 'Username and message cannot be empty'
-            });
-        }
-        
-        // Create message object
-        totalMessages++;
-        const msg = {
-            id: totalMessages,
-            username: cleanUsername,
-            message: cleanMessage,
-            game: cleanGame,
-            timestamp: getTimestamp()
-        };
-        
-        // Store message (keep only last MAX_MESSAGES)
-        messages.push(msg);
-        if (messages.length > MAX_MESSAGES) {
-            messages.shift();
-        }
-        
-        // Update user activity
-        updateUserActivity(cleanUsername, cleanGame);
-        
-        // Log message
-        console.log(`📨 [${cleanGame}] ${cleanUsername}: ${cleanMessage}`);
-        
+        const username = utils.sanitize(req.body.username, CONFIG.MAX_USERNAME_LENGTH);
+        const message = utils.sanitize(req.body.message, CONFIG.MAX_MESSAGE_LENGTH);
+        const game = utils.sanitize(req.body.game || 'Unknown Game', CONFIG.MAX_GAME_LENGTH);
+        const userId = req.body.userId || 'unknown';
+
+        // Add message
+        const msg = messageManager.addMessage(username, message, game, userId);
+
         // Send response
         res.status(201).json({
             success: true,
-            message: 'Message sent',
+            message: 'Message sent successfully',
             data: msg
         });
-        
+
     } catch (error) {
         console.error('❌ Send error:', error);
         res.status(500).json({
-            error: 'Internal server error: ' + error.message
+            success: false,
+            error: 'Internal server error',
+            details: error.message
         });
     }
 });
 
-/**
- * Get messages endpoint
- * GET /messages?since=TIMESTAMP&limit=20
- */
+// ─────────────────────────────────────────────────────────
+// GET /messages - Retrieve messages
+// ─────────────────────────────────────────────────────────
 app.get('/messages', (req, res) => {
     try {
-        const { since, limit = '20' } = req.query;
-        const maxLimit = Math.min(parseInt(limit) || 20, MAX_MESSAGES);
-        
-        // Filter messages
-        let filtered = messages;
-        
-        if (since) {
-            filtered = messages.filter(m => m.timestamp > since);
-        }
-        
-        // Get last N messages
-        const recent = filtered.slice(-maxLimit);
-        
+        const since = req.query.since;
+        const limit = parseInt(req.query.limit) || 50;
+
+        const messages = messageManager.getMessagesSince(since, limit);
+
         res.json({
             success: true,
-            count: recent.length,
-            messages: recent
+            count: messages.length,
+            messages: messages,
+            onlineUsers: storage.activeUsers.size
         });
-        
+
     } catch (error) {
         console.error('❌ Get messages error:', error);
         res.status(500).json({
-            error: 'Internal server error: ' + error.message
+            success: false,
+            error: 'Internal server error',
+            details: error.message
         });
     }
 });
 
-/**
- * Statistics endpoint
- * GET /stats
- */
+// ─────────────────────────────────────────────────────────
+// GET /stats - Server statistics
+// ─────────────────────────────────────────────────────────
 app.get('/stats', (req, res) => {
-    const uptime = getUptime();
-    
     res.json({
-        total_messages: totalMessages,
-        unique_users: activeUsers.size,
-        messages_in_memory: messages.length,
-        uptime_hours: (uptime / 3600).toFixed(2),
-        server_start: serverStartTime.toISOString()
+        success: true,
+        stats: messageManager.getStats()
     });
 });
 
-/**
- * Clear messages endpoint
- * POST /clear
- */
+// ─────────────────────────────────────────────────────────
+// GET /users - Active users list
+// ─────────────────────────────────────────────────────────
+app.get('/users', (req, res) => {
+    const users = userManager.getActiveUsers();
+    res.json({
+        success: true,
+        count: users.length,
+        users: users
+    });
+});
+
+// ─────────────────────────────────────────────────────────
+// POST /clear - Clear all messages (Admin)
+// ─────────────────────────────────────────────────────────
 app.post('/clear', (req, res) => {
-    const deleted = messages.length;
-    messages.length = 0; // Clear array
-    
-    console.log(`🗑️  Cleared ${deleted} messages`);
+    const deleted = messageManager.clearAll();
     
     res.json({
         success: true,
@@ -244,62 +377,102 @@ app.post('/clear', (req, res) => {
     });
 });
 
-/**
- * Health check endpoint
- * GET /health
- */
+// ─────────────────────────────────────────────────────────
+// GET /health - Health check
+// ─────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
     res.json({
         status: 'healthy',
-        timestamp: getTimestamp()
+        timestamp: utils.getTimestamp(),
+        uptime: utils.getUptime()
     });
 });
 
+// ─────────────────────────────────────────────────────────
+// GET /ping - Simple ping
+// ─────────────────────────────────────────────────────────
+app.get('/ping', (req, res) => {
+    res.json({ pong: true });
+});
+
 // ═══════════════════════════════════════════════════════════
-//  ERROR HANDLERS
+//  ❌ ERROR HANDLERS
 // ═══════════════════════════════════════════════════════════
 
-// 404 handler
+// 404 - Route not found
 app.use((req, res) => {
     res.status(404).json({
-        error: 'Endpoint not found'
+        success: false,
+        error: 'Endpoint not found',
+        path: req.path
     });
 });
 
-// Global error handler
+// 500 - Internal server error
 app.use((err, req, res, next) => {
-    console.error('❌ Server error:', err);
+    console.error('❌ Unhandled error:', err);
     res.status(500).json({
+        success: false,
         error: 'Internal server error'
     });
 });
 
 // ═══════════════════════════════════════════════════════════
-//  SERVER STARTUP
+//  🚀 SERVER STARTUP
 // ═══════════════════════════════════════════════════════════
 
-app.listen(PORT, () => {
-    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+const server = app.listen(CONFIG.PORT, () => {
+    console.log('\n');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('  🌐 UNIVERSAL ROBLOX CHAT SERVER');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`  Version: 2.0.0`);
-    console.log(`  Language: Node.js ${process.version}`);
-    console.log('  Storage: In-Memory');
-    console.log(`  Max Messages: ${MAX_MESSAGES}`);
-    console.log('  CORS: Enabled');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🌐 Local: http://localhost:${PORT}`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`  📦 Version: 2.1.0`);
+    console.log(`  🔧 Node.js: ${process.version}`);
+    console.log(`  💾 Storage: In-Memory`);
+    console.log(`  📝 Max Messages: ${CONFIG.MAX_MESSAGES}`);
+    console.log(`  🔒 CORS: Enabled`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`  🚀 Server: http://localhost:${CONFIG.PORT}`);
+    console.log(`  📊 Status: http://localhost:${CONFIG.PORT}/`);
+    console.log(`  💬 Messages: http://localhost:${CONFIG.PORT}/messages`);
+    console.log(`  📈 Stats: http://localhost:${CONFIG.PORT}/stats`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`  ⏰ Started: ${storage.serverStartTime.toISOString()}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-    console.log('👋 Received SIGTERM, shutting down gracefully...');
-    process.exit(0);
-});
+// ═══════════════════════════════════════════════════════════
+//  🛑 GRACEFUL SHUTDOWN
+// ═══════════════════════════════════════════════════════════
 
-process.on('SIGINT', () => {
-    console.log('\n👋 Received SIGINT, shutting down gracefully...');
-    process.exit(0);
-});
+const shutdown = (signal) => {
+    console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
+    
+    server.close(() => {
+        console.log('✅ Server closed');
+        console.log(`📊 Final stats: ${storage.totalMessagesSent} total messages sent`);
+        process.exit(0);
+    });
+
+    // Force shutdown after 10 seconds
+    setTimeout(() => {
+        console.error('⚠️  Forced shutdown after timeout');
+        process.exit(1);
+    }, 10000);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// ═══════════════════════════════════════════════════════════
+//  📝 EXPORTS (for testing)
+// ═══════════════════════════════════════════════════════════
+
+module.exports = {
+    app,
+    storage,
+    messageManager,
+    userManager,
+    utils
+};
+                   
