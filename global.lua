@@ -1,398 +1,166 @@
--- Universal Cross-Game Chat Client (Working Version)
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
-local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 
--- ✅ YOUR SERVER URL
+-- CONFIG
 local SERVER_URL = "https://roblox-chat-830h.onrender.com"
+local KEY = "YOUR_KEY_HERE" -- Connect this to your Key System variable
 
--- HTTP Request Function (Executor-specific)
-local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
-
-if not httpRequest then
-    warn("⚠️ Your executor doesn't support HTTP requests!")
-    return
-end
-
--- Settings
-local UPDATE_INTERVAL = 3
-local MAX_MESSAGE_LENGTH = 200
-
--- State
-local lastMessageTime = nil
+-- UI Variables
+local unreadCount = 0
+local isMinimized = false
+local lastTimestamp = nil
 local isActive = true
-local currentGameName = "Unknown Game"
 
--- Get game name safely
-pcall(function()
-    currentGameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
-end)
+-- UI SETUP (Mobile Responsive)
+local screenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+screenGui.Name = "SmoothGlobalChat"
 
--- GUI Setup
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "UniversalChat"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 1003
-screenGui.Parent = game:GetService("CoreGui")
+-- Main Chat Frame
+local mainFrame = Instance.new("Frame", screenGui)
+mainFrame.Size = UDim2.new(0.35, 0, 0.45, 0)
+mainFrame.Position = UDim2.new(0.64, 0, 0.5, -200)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+mainFrame.ClipsDescendants = true
 
--- Main Frame
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 320, 0, 420)
-mainFrame.Position = UDim2.new(1, -340, 0.5, -210)
-mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-mainFrame.BackgroundTransparency = 0.05
-mainFrame.BorderSizePixel = 0
-mainFrame.Active = true
-mainFrame.Draggable = true
-mainFrame.Parent = screenGui
+local uiCorner = Instance.new("UICorner", mainFrame)
+uiCorner.CornerRadius = UDim.new(0, 10)
 
-local mainCorner = Instance.new("UICorner")
-mainCorner.CornerRadius = UDim.new(0, 12)
-mainCorner.Parent = mainFrame
+-- Minimize Bar (Hidden by default)
+local minBar = Instance.new("TextButton", screenGui)
+minBar.Size = UDim2.new(0.2, 0, 0, 40)
+minBar.Position = UDim2.new(0.79, 0, 0.9, 0)
+minBar.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+minBar.Text = "💬 Global Chat (0)"
+minBar.TextColor3 = Color3.fromRGB(255, 255, 255)
+minBar.Visible = false
+Instance.new("UICorner", minBar)
 
--- Title Bar
-local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1, 0, 0, 35)
-titleBar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-titleBar.BorderSizePixel = 0
-titleBar.Parent = mainFrame
+-- Chat List (The Slider Area)
+local chatList = Instance.new("ScrollingFrame", mainFrame)
+chatList.Size = UDim2.new(1, -10, 0.8, -40)
+chatList.Position = UDim2.new(0, 5, 0, 45)
+chatList.BackgroundTransparency = 1
+chatList.ScrollBarThickness = 4
+chatList.CanvasSize = UDim2.new(0,0,0,0)
 
-local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 12)
-titleCorner.Parent = titleBar
+local layout = Instance.new("UIListLayout", chatList)
+layout.Padding = UDim.new(0, 8)
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, -75, 1, 0)
-titleLabel.Position = UDim2.new(0, 8, 0, 0)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "🌐 Universal Chat"
-titleLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 14
-titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-titleLabel.Parent = titleBar
+-- Input Box
+local input = Instance.new("TextBox", mainFrame)
+input.Size = UDim2.new(0.9, 0, 0, 35)
+input.Position = UDim2.new(0.05, 0, 0.9, -5)
+input.PlaceholderText = "Type message..."
+input.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+input.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", input)
 
--- Status Indicator
-local statusDot = Instance.new("Frame")
-statusDot.Size = UDim2.new(0, 10, 0, 10)
-statusDot.Position = UDim2.new(1, -68, 0.5, -5)
-statusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
-statusDot.BorderSizePixel = 0
-statusDot.Parent = titleBar
-
-local dotCorner = Instance.new("UICorner")
-dotCorner.CornerRadius = UDim.new(1, 0)
-dotCorner.Parent = statusDot
-
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(0, 50, 1, 0)
-statusLabel.Position = UDim2.new(1, -58, 0, 0)
-statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "Offline"
-statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.TextSize = 9
-statusLabel.Parent = titleBar
-
--- Close Button
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 28, 0, 28)
-closeBtn.Position = UDim2.new(1, -32, 0, 3.5)
-closeBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-closeBtn.Text = "✕"
-closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextSize = 14
-closeBtn.Parent = titleBar
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 8)
-closeCorner.Parent = closeBtn
-
--- Game Label
-local gameLabel = Instance.new("TextLabel")
-gameLabel.Size = UDim2.new(0.95, 0, 0, 22)
-gameLabel.Position = UDim2.new(0.025, 0, 0, 42)
-gameLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 80)
-gameLabel.BorderSizePixel = 0
-gameLabel.Text = "📍 " .. currentGameName
-gameLabel.TextColor3 = Color3.fromRGB(150, 200, 255)
-gameLabel.Font = Enum.Font.Gotham
-gameLabel.TextSize = 10
-gameLabel.TextTruncate = Enum.TextTruncate.AtEnd
-gameLabel.Parent = mainFrame
-
-local gameCorner = Instance.new("UICorner")
-gameCorner.CornerRadius = UDim.new(0, 6)
-gameCorner.Parent = gameLabel
-
--- Chat Display Frame
-local chatFrame = Instance.new("ScrollingFrame")
-chatFrame.Size = UDim2.new(0.95, 0, 0, 305)
-chatFrame.Position = UDim2.new(0.025, 0, 0, 72)
-chatFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-chatFrame.BorderSizePixel = 0
-chatFrame.ScrollBarThickness = 6
-chatFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 200, 255)
-chatFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-chatFrame.ScrollingEnabled = true
-chatFrame.ScrollingDirection = Enum.ScrollingDirection.Y
-chatFrame.Parent = mainFrame
-
-local chatCorner = Instance.new("UICorner")
-chatCorner.CornerRadius = UDim.new(0, 8)
-chatCorner.Parent = chatFrame
-
-local chatLayout = Instance.new("UIListLayout")
-chatLayout.SortOrder = Enum.SortOrder.LayoutOrder
-chatLayout.Padding = UDim.new(0, 6)
-chatLayout.Parent = chatFrame
-
--- Auto-resize canvas
-chatLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    chatFrame.CanvasSize = UDim2.new(0, 0, 0, chatLayout.AbsoluteContentSize.Y + 10)
-end)
-
--- Input Frame
-local inputFrame = Instance.new("Frame")
-inputFrame.Size = UDim2.new(0.95, 0, 0, 32)
-inputFrame.Position = UDim2.new(0.025, 0, 1, -38)
-inputFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-inputFrame.BorderSizePixel = 0
-inputFrame.Parent = mainFrame
-
-local inputCorner = Instance.new("UICorner")
-inputCorner.CornerRadius = UDim.new(0, 8)
-inputCorner.Parent = inputFrame
-
--- Text Input
-local textBox = Instance.new("TextBox")
-textBox.Size = UDim2.new(0.7, 0, 0.85, 0)
-textBox.Position = UDim2.new(0.02, 0, 0.075, 0)
-textBox.BackgroundTransparency = 1
-textBox.Text = ""
-textBox.PlaceholderText = "Type message..."
-textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-textBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
-textBox.Font = Enum.Font.Gotham
-textBox.TextSize = 12
-textBox.TextXAlignment = Enum.TextXAlignment.Left
-textBox.ClearTextOnFocus = false
-textBox.Parent = inputFrame
-
--- Send Button
-local sendBtn = Instance.new("TextButton")
-sendBtn.Size = UDim2.new(0.26, 0, 0.85, 0)
-sendBtn.Position = UDim2.new(0.73, 0, 0.075, 0)
-sendBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 255)
-sendBtn.Text = "Send"
-sendBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-sendBtn.Font = Enum.Font.GothamBold
-sendBtn.TextSize = 12
-sendBtn.Parent = inputFrame
-
-local sendCorner = Instance.new("UICorner")
-sendCorner.CornerRadius = UDim.new(0, 6)
-sendCorner.Parent = sendBtn
-
--- Functions
-local function hexToRgb(hex)
-    hex = hex:gsub("#", "")
-    local r = tonumber(hex:sub(1,2), 16) or 200
-    local g = tonumber(hex:sub(3,4), 16) or 200
-    local b = tonumber(hex:sub(5,6), 16) or 200
-    return Color3.fromRGB(r, g, b)
-end
-
-local function updateStatus(online)
-    if online then
-        statusDot.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
-        statusLabel.Text = "Online"
-        statusLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
-    else
-        statusDot.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-        statusLabel.Text = "Offline"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
-    end
-end
-
-local function createMessageBubble(username, message, game, timestamp, rank, rankEmoji, rankColor)
-    local isMe = (username == LocalPlayer.Name)
-    
-    rank = rank or "Member"
-    rankEmoji = rankEmoji or "👤"
-    rankColor = rankColor or "#CCCCCC"
-    
-    local msgFrame = Instance.new("Frame")
-    msgFrame.Size = UDim2.new(1, -10, 0, 0)
+-- FUNCTIONS
+local function createMessage(data)
+    local msgFrame = Instance.new("Frame", chatList)
+    msgFrame.Size = UDim2.new(0.95, 0, 0, 50)
     msgFrame.BackgroundTransparency = 1
-    msgFrame.AutomaticSize = Enum.AutomaticSize.Y
-    msgFrame.Parent = chatFrame
     
-    local msgLayout = Instance.new("UIListLayout")
-    msgLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    msgLayout.Padding = UDim.new(0, 2)
-    msgLayout.Parent = msgFrame
+    -- Avatar Image
+    local av = Instance.new("ImageLabel", msgFrame)
+    av.Size = UDim2.new(0, 35, 0, 35)
+    av.Image = "https://www.roblox.com/headshot-thumbnail/image?userId="..data.user_id.."&width=420&height=420&format=png"
+    Instance.new("UICorner", av).CornerRadius = UDim.new(1, 0)
     
-    -- Header with rank
-    local headerLabel = Instance.new("TextLabel")
-    headerLabel.Size = UDim2.new(1, 0, 0, 14)
-    headerLabel.BackgroundTransparency = 1
+    -- Text Logic
+    local content = Instance.new("TextLabel", msgFrame)
+    content.Position = UDim2.new(0, 45, 0, 0)
+    content.Size = UDim2.new(1, -50, 1, 0)
+    content.BackgroundTransparency = 1
+    content.TextXAlignment = Enum.TextXAlignment.Left
+    content.RichText = true
     
-    local timeStr = timestamp:match("T(%d%d:%d%d)") or "??:??"
-    local rankText = "[" .. rankEmoji .. " " .. rank:upper() .. "] "
-    headerLabel.Text = rankText .. username .. " • " .. game .. " • " .. timeStr
-    headerLabel.TextColor3 = hexToRgb(rankColor)
-    headerLabel.Font = Enum.Font.GothamBold
-    headerLabel.TextSize = 9
-    headerLabel.TextXAlignment = isMe and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
-    headerLabel.LayoutOrder = 1
-    headerLabel.Parent = msgFrame
+    -- Local Time Conversion
+    local timeStr = DateTime.fromIsoDate(data.timestamp):ToLocalTime():FormatLocalTime("LT", "en-us")
     
-    -- Message bubble
-    local bubble = Instance.new("Frame")
-    bubble.Size = UDim2.new(0.85, 0, 0, 0)
-    bubble.Position = isMe and UDim2.new(0.15, 0, 0, 0) or UDim2.new(0, 0, 0, 0)
-    bubble.BackgroundColor3 = isMe and Color3.fromRGB(50, 100, 200) or Color3.fromRGB(50, 50, 50)
-    bubble.AutomaticSize = Enum.AutomaticSize.Y
-    bubble.LayoutOrder = 2
-    bubble.Parent = msgFrame
-    
-    local bubbleCorner = Instance.new("UICorner")
-    bubbleCorner.CornerRadius = UDim.new(0, 8)
-    bubbleCorner.Parent = bubble
-    
-    local bubblePadding = Instance.new("UIPadding")
-    bubblePadding.PaddingLeft = UDim.new(0, 8)
-    bubblePadding.PaddingRight = UDim.new(0, 8)
-    bubblePadding.PaddingTop = UDim.new(0, 6)
-    bubblePadding.PaddingBottom = UDim.new(0, 6)
-    bubblePadding.Parent = bubble
-    
-    local msgLabel = Instance.new("TextLabel")
-    msgLabel.Size = UDim2.new(1, 0, 0, 0)
-    msgLabel.BackgroundTransparency = 1
-    msgLabel.Text = message
-    msgLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    msgLabel.Font = Enum.Font.Gotham
-    msgLabel.TextSize = 11
-    msgLabel.TextWrapped = true
-    msgLabel.TextXAlignment = Enum.TextXAlignment.Left
-    msgLabel.AutomaticSize = Enum.AutomaticSize.Y
-    msgLabel.Parent = bubble
-    
-    -- Auto-scroll
-    task.wait(0.05)
-    chatFrame.CanvasPosition = Vector2.new(0, chatFrame.AbsoluteCanvasSize.Y)
+    content.Text = string.format(
+        "<font color='#AAAAAA'>[%s]</font> <b>%s</b> <font size='10' color='#55AAFF'>(%s)</font>\n%s",
+        timeStr, data.display_name, data.game, data.message
+    )
+    content.TextColor3 = Color3.new(1,1,1)
+    content.TextWrapped = true
+
+    chatList.CanvasPosition = Vector2.new(0, 99999)
 end
 
-local function sendMessage(message)
-    if not message or message == "" or message:match("^%s*$") then return end
-    
-    message = message:sub(1, MAX_MESSAGE_LENGTH)
-    
-    local success, response = pcall(function()
-        return httpRequest({
-            Url = SERVER_URL .. "/send",
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = HttpService:JSONEncode({
-                username = LocalPlayer.Name,
-                message = message,
-                game = currentGameName
-            })
-        })
+local function fetchData()
+    local success, res = pcall(function()
+        local url = SERVER_URL .. "/messages?username=" .. LocalPlayer.Name
+        if lastTimestamp then url = url .. "&since=" .. lastTimestamp end
+        return game:HttpGet(url)
     end)
     
-    if success and response.StatusCode == 201 then
-        updateStatus(true)
-    else
-        warn("Failed to send message:", response and response.StatusCode or "No response")
-        updateStatus(false)
-    end
-end
-
-local function fetchMessages()
-    local success, response = pcall(function()
-        local url = SERVER_URL .. "/messages"
-        if lastMessageTime then
-            url = url .. "?since=" .. HttpService:UrlEncode(lastMessageTime)
-        end
-        return httpRequest({
-            Url = url,
-            Method = "GET"
-        })
-    end)
-    
-    if success and response.StatusCode == 200 then
-        local data = HttpService:JSONDecode(response.Body)
-        if data.success and data.messages then
-            updateStatus(true)
-            
-            for _, msg in ipairs(data.messages) do
-                if msg.username ~= LocalPlayer.Name then
-                    createMessageBubble(
-                        msg.username, 
-                        msg.message, 
-                        msg.game, 
-                        msg.timestamp,
-                        msg.rank,
-                        msg.rank_emoji,
-                        msg.rank_color
-                    )
-                end
-                lastMessageTime = msg.timestamp
+    if success then
+        local data = HttpService:JSONDecode(res)
+        for _, msg in pairs(data.messages) do
+            if msg.username ~= LocalPlayer.Name then
+                createMessage(msg)
+                if isMinimized then unreadCount += 1 end
             end
+            lastTimestamp = msg.timestamp
         end
-    else
-        updateStatus(false)
+        minBar.Text = "💬 Global Chat ("..unreadCount..")"
     end
 end
 
--- Button Events
-sendBtn.MouseButton1Click:Connect(function()
-    local message = textBox.Text
-    if message ~= "" then
-        sendMessage(message)
-        createMessageBubble(LocalPlayer.Name, message, currentGameName, DateTime.now():ToIsoDate(), "Member", "👤", "#CCCCCC")
-        textBox.Text = ""
+-- BUTTON LOGIC
+input.FocusLost:Connect(function(enter)
+    if enter and input.Text ~= "" then
+        local text = input.Text
+        input.Text = ""
+        -- Create local bubble instantly for "Smooth" feel
+        createMessage({
+            user_id = LocalPlayer.UserId,
+            display_name = LocalPlayer.DisplayName,
+            game = "Current",
+            message = text,
+            timestamp = DateTime.now():ToIsoDate()
+        })
+        
+        pcall(function()
+            game:HttpPost(SERVER_URL.."/send", HttpService:JSONEncode({
+                username = LocalPlayer.Name,
+                display_name = LocalPlayer.DisplayName,
+                user_id = LocalPlayer.UserId,
+                message = text,
+                game = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+            }))
+        end)
     end
 end)
 
-textBox.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        local message = textBox.Text
-        if message ~= "" then
-            sendMessage(message)
-            createMessageBubble(LocalPlayer.Name, message, currentGameName, DateTime.now():ToIsoDate(), "Member", "👤", "#CCCCCC")
-            textBox.Text = ""
-        end
-    end
+-- Minimize Logic
+local minBtn = Instance.new("TextButton", mainFrame)
+minBtn.Size = UDim2.new(0, 30, 0, 30)
+minBtn.Position = UDim2.new(1, -35, 0, 5)
+minBtn.Text = "-"
+minBtn.BackgroundColor3 = Color3.new(1,0,0)
+
+minBtn.MouseButton1Click:Connect(function()
+    isMinimized = true
+    mainFrame.Visible = false
+    minBar.Visible = true
 end)
 
-closeBtn.MouseButton1Click:Connect(function()
-    isActive = false
-    screenGui:Destroy()
+minBar.MouseButton1Click:Connect(function()
+    isMinimized = false
+    unreadCount = 0
+    mainFrame.Visible = true
+    minBar.Visible = false
 end)
 
--- Auto-fetch loop
+-- Start Loop
 task.spawn(function()
-    while isActive and task.wait(UPDATE_INTERVAL) do
-        fetchMessages()
+    while isActive do
+        fetchData()
+        task.wait(2)
     end
 end)
-
--- Initial fetch
-task.wait(1)
-fetchMessages()
-
-print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-print("🌐 UNIVERSAL CHAT LOADED")
-print("✅ Works in ANY game!")
-print("Server:", SERVER_URL)
-print("Game:", currentGameName)
-print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
